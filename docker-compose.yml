@@ -1,0 +1,33 @@
+services:
+    bot:
+        container_name: mediaEblan-bot
+        restart: unless-stopped
+        build:
+            context: .
+            dockerfile: Dockerfile
+        environment:
+            - NODE_ENV=production
+            - DOWNLOAD_DIR=/usr/src/app/tmp
+        env_file:
+            - path: ./.env
+              required: false
+            - path: ./.env.production
+              required: false
+        tmpfs:
+            - /usr/src/app/tmp:size=2g
+    postgres:
+        container_name: mediaEblan-postgres
+        image: postgres:latest
+        restart: unless-stopped
+        environment:
+            - POSTGRES_USER=mediaEblan
+            - POSTGRES_PASSWORD=a1f0d5c54ee88a67e10ea3f1
+            - POSTGRES_DB=mediaEblan
+        volumes:
+            - postgres_data:/var/lib/postgresql
+volumes:
+    postgres_data:
+    
+    
+networks:
+    default: {}

@@ -1,0 +1,11 @@
+{
+	"version": 1,
+	"skills": {
+		"gramio": {
+			"source": "gramiojs/documentation",
+			"sourceType": "github",
+			"skillPath": "skills/SKILL.md",
+			"computedHash": "312cc86e281a6f4e313bf6a9a6004ec3f27601b3bc06d88475cd4dce540ffc0c"
+		}
+	}
+}
