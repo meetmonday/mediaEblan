@@ -19,6 +19,10 @@ export const config = {
 		.default("i.pixiv.re")
 		.asString(),
 
+	// Reddit session cookie — helps when Reddit demands account authentication
+	// (e.g. "Account authentication is required"). Empty = anonymous access.
+	REDDIT_COOKIE: env.get("REDDIT_COOKIE").default("").asString(),
+
 	// Where downloaded media is stored before sending (tmpfs in Docker)
 	DOWNLOAD_DIR: env.get("DOWNLOAD_DIR").default("tmp").asString(),
 

@@ -1,8 +1,13 @@
 import { pixivProvider } from "./pixiv.ts";
+import { redditProvider } from "./reddit.ts";
 import { twitterProvider } from "./twitter.ts";
 import type { Provider } from "./types.ts";
 
-export const providers: Provider[] = [twitterProvider, pixivProvider];
+export const providers: Provider[] = [
+	twitterProvider,
+	pixivProvider,
+	redditProvider,
+];
 
 /** Human-readable names of the sites supported by the registered providers. */
 export function listSupportedSites(): string[] {

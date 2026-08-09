@@ -1,10 +1,17 @@
 import type { TelegramInlineQueryResult } from "@gramio/types";
-import { Composer, InlineQueryResult } from "gramio";
+import { Composer, InlineQueryResult, InputMessageContent } from "gramio";
 import { mediaCache } from "../media/cache.ts";
 import { buildCaption } from "../media/caption.ts";
 import { composer } from "../plugins/index.ts";
 import { findMediaUrl, resolveProvider } from "../providers/registry.ts";
 import type { DirectMediaResult } from "../providers/types.ts";
+import type { TrashboxComment } from "../services/trashbox.ts";
+import {
+	buildCommentMessage,
+	fetchComment,
+	findCommentUrl,
+	resolveCommentUrl,
+} from "../services/trashbox.ts";
 
 const ANSWER_OPTIONS = { cache_time: 0, is_personal: true } as const;
 
@@ -49,9 +56,47 @@ function toInlineResults(
 	return results;
 }
 
+function commentResults(
+	comment: TrashboxComment,
+	sourceUrl: string,
+): TelegramInlineQueryResult[] {
+	// Always a text article — comment images are embedded as clickable links.
+	const message = buildCommentMessage(comment, sourceUrl);
+	const text = message.toString();
+	return [
+		InlineQueryResult.article(
+			"0",
+			`Комментарий @${comment.login}`,
+			InputMessageContent.text(text, { entities: message.entities }),
+			{
+				url: sourceUrl,
+				description: text.split("\n").find(Boolean)?.slice(0, 100),
+			},
+		),
+	];
+}
+
 export const inlineComposer = new Composer()
 	.extend(composer)
 	.inlineQuery(/https?:\/\/\S+/i, async (context) => {
+		const commentUrl = findCommentUrl(context.query);
+		if (commentUrl) {
+			try {
+				const { topicId, commentId, host } =
+					await resolveCommentUrl(commentUrl);
+				const comment = await fetchComment(topicId, commentId, host);
+				if (comment) {
+					return context.answer(
+						commentResults(comment, commentUrl.toString()),
+						ANSWER_OPTIONS,
+					);
+				}
+			} catch {
+				// Resolution failed — offer the chat as a fallback.
+			}
+			return context.answer([], { ...ANSWER_OPTIONS, button: OPEN_BOT_BUTTON });
+		}
+
 		const url = findMediaUrl(context.query);
 		if (!url) return context.answer([], ANSWER_OPTIONS);
 

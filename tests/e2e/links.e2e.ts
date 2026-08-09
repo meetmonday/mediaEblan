@@ -20,8 +20,12 @@ for (const link of links) {
 }
 
 function extractId(url: string): string {
-	const match = url.match(/(?:status|artworks)\/(\d+)/);
-	return match?.[1] ?? url.replace(/^https?:\/\//, "").slice(0, 30);
+	const match = url.match(
+		/(?:status|artworks|comments|gallery)\/([a-zA-Z0-9]+)|(?:\/s\/)([a-zA-Z0-9]+)/,
+	);
+	return (
+		match?.[1] ?? match?.[2] ?? url.replace(/^https?:\/\//, "").slice(0, 30)
+	);
 }
 
 /** Runs the real chat flow (link → provider → download → caption → media send). */

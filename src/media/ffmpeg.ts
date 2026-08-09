@@ -52,6 +52,26 @@ async function runFfmpeg(args: string[]): Promise<void> {
 	}
 }
 
+/** Muxes an external audio track into a video without re-encoding (Reddit DASH). */
+export async function muxAudio(
+	videoPath: string,
+	audioPath: string,
+	outPath: string,
+): Promise<void> {
+	await runFfmpeg([
+		"-y",
+		"-i",
+		videoPath,
+		"-i",
+		audioPath,
+		"-c",
+		"copy",
+		"-movflags",
+		"+faststart",
+		outPath,
+	]);
+}
+
 /**
  * Re-encodes the video to H.264/AAC MP4 small enough to fit `maxBytes`.
  * Two passes: bitrate-based, then a scaled-down fallback.

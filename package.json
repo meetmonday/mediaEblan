@@ -4,22 +4,24 @@
 	"scripts": {
 		"dev": "bun --watch src/index.ts",
 		"start": "NODE_ENV=production bun src/index.ts",
-		"test": "bun test",
+		"test": "bun test --isolate",
 		"test:e2e": "bun test ./tests/e2e/links.e2e.ts",
 		"lint": "bun x @biomejs/biome check",
 		"lint:fix": "bun run lint --fix"
 	},
 	"dependencies": {
-		"gramio": "^0.9.0",
-		"env-var": "^7.5.0",
+		"@gramio/auto-answer-callback-query": "^0.0.3",
 		"@gramio/auto-retry": "^0.0.3",
 		"@gramio/media-cache": "^0.0.4",
 		"@gramio/media-group": "^0.0.4",
-		"@gramio/auto-answer-callback-query": "^0.0.3",
 		"@gramio/views": "^0.2.0",
+		"@verrou/core": "^0.5.2",
+		"env-var": "^7.5.0",
+		"gramio": "^0.9.0",
 		"ioredis": "^5.10.1",
 		"jobify": "^0.1.6",
-		"@verrou/core": "^0.5.2"
+		"marked": "^18.0.2",
+		"node-html-markdown": "^2.0.0"
 	},
 	"devDependencies": {
 		"typescript": "^5.9.3",
