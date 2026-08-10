@@ -14,7 +14,7 @@ import type {
 import { verrou } from "../services/locks.ts";
 import { mediaCache } from "./cache.ts";
 import { cachedCaption, captionFor } from "./caption.ts";
-import { compressVideo, fileSize } from "./ffmpeg.ts";
+import { CompressionError, compressVideo, fileSize } from "./ffmpeg.ts";
 
 /**
  * Minimal target for whatever delivers media to the user.

@@ -162,7 +162,7 @@ export const pixivProvider: Provider = {
 						"pixiv",
 						"Не удалось получить ссылку на изображение",
 					);
-				return { url: src, name: `${id}_${index}` };
+				return { url: src, name: `${parsed.id}_${index}` };
 			}),
 			downloadDir,
 			{ headers: IMG_HEADERS, sequential: true },
