@@ -142,15 +142,18 @@ export const inlineComposer = new Composer()
 									caption,
 								},
 							);
-				return context.answer([result], ANSWER_OPTIONS);
+				return context.answer([result], {
+					...ANSWER_OPTIONS,
+					button: openBotButton(url.toString()),
+				});
 			}
 
 			const direct = await resolveProvider(url)?.resolveDirect?.(url);
 			if (direct && direct.items.length > 0) {
-				return context.answer(
-					toInlineResults(direct, url.toString()),
-					ANSWER_OPTIONS,
-				);
+				return context.answer(toInlineResults(direct, url.toString()), {
+					...ANSWER_OPTIONS,
+					button: openBotButton(url.toString()),
+				});
 			}
 		} catch {
 			// Resolution failed — offer the chat as a fallback.

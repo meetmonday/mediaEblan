@@ -13,10 +13,15 @@ export const startComposer = new Composer()
 	.command(
 		"start",
 		{ description: `Скачать медиа из ${listSupportedSites().join(", ")}` },
-		(context) => {
+		async (context) => {
 			const sourceUrl = context.args ? pendingLinks.get(context.args) : null;
 			if (sourceUrl) {
-				return sendMedia(context, new URL(sourceUrl));
+				await sendMedia(context, new URL(sourceUrl), {
+					includeSourceLink: true,
+					reply: false,
+				});
+				await context.delete().catch(() => {});
+				return;
 			}
 			return context.send(welcomeMessage());
 		},

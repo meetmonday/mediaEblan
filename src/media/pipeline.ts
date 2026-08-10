@@ -95,17 +95,25 @@ async function fetchProviderResult(
  * Downloads media from a supported URL and sends it through `sender`.
  * The first item carries a caption built from the source metadata.
  * Cached URLs send the stored file_id directly, without re-downloading.
+ * With `includeSourceLink`, the caption gets a `🔗 <url>` line (like inline).
  */
 export async function processMedia(
 	url: URL,
 	sender: MediaSender,
+	includeSourceLink = false,
 ): Promise<void> {
 	const sourceUrl = url.toString();
 
 	await verrou.createLock(lockKeyFor(url), "5 minutes").run(async () => {
 		const cached = mediaCache.get(sourceUrl);
 		if (cached) {
-			await sender.sendPhoto(cached.fileId, buildCaption(cached.metadata));
+			await sender.sendPhoto(
+				cached.fileId,
+				buildCaption(
+					cached.metadata,
+					includeSourceLink ? sourceUrl : undefined,
+				),
+			);
 			return;
 		}
 
@@ -127,7 +135,10 @@ export async function processMedia(
 		if (result.items.length === 0)
 			throw new MediaError("no-media", "В ссылке не найдено медиа");
 
-		const caption = buildCaption(result.metadata);
+		const caption = buildCaption(
+			result.metadata,
+			includeSourceLink ? sourceUrl : undefined,
+		);
 		try {
 			const prepare = async (item: MediaItem): Promise<MediaGroupInput> => {
 				await sender.chatAction(

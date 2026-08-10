@@ -259,6 +259,7 @@ describe("flow: inline", () => {
 
 		const call = env.lastApiCall("answerInlineQuery");
 		expect(call?.params.results).toHaveLength(2);
+		expect(call?.params.button?.text).toBe("Открыть бот и вставить ссылку");
 		// @ts-expect-error -- result is a discriminated union
 		expect(call?.params.results[0]?.type).toBe("photo");
 		// @ts-expect-error -- result is a discriminated union
@@ -303,9 +304,14 @@ describe("flow: inline", () => {
 		await user.sendCommand("start", token);
 
 		expect(env.lastApiCall("sendPhoto")).toBeDefined();
+		expect(env.filterApiCalls("replyWithPhoto")).toHaveLength(0);
 		expect(env.lastApiCall("sendPhoto")?.params.caption).toContain(
 			"📌 Солнечный день",
 		);
+		expect(env.lastApiCall("sendPhoto")?.params.caption).toContain(
+			"🔗 https://example.com/deep-link",
+		);
+		expect(env.filterApiCalls("deleteMessage")).toHaveLength(1);
 	});
 
 	test("cached media → cached photo result with file_id", async () => {
@@ -320,6 +326,7 @@ describe("flow: inline", () => {
 
 		const call = env.lastApiCall("answerInlineQuery");
 		expect(call?.params.results).toHaveLength(1);
+		expect(call?.params.button?.text).toBe("Открыть бот и вставить ссылку");
 		// @ts-expect-error -- result is a discriminated union
 		expect(call?.params.results[0]?.type).toBe("photo");
 		// @ts-expect-error -- result is a discriminated union
