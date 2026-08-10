@@ -53,7 +53,11 @@ function metadataOf(tweet: FxTweet): ProviderResult["metadata"] {
 	return {
 		title: tweet.text ? truncate(tweet.text) : undefined,
 		author: tweet.author
-			? { displayName: tweet.author.name, handle: tweet.author.screen_name }
+			? {
+					displayName: tweet.author.name,
+					handle: tweet.author.screen_name,
+					profileUrl: `https://x.com/${tweet.author.screen_name}`,
+				}
 			: undefined,
 		date: tweet.created_at,
 		likes: tweet.likes,

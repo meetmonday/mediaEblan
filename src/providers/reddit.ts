@@ -106,6 +106,8 @@ interface RedditPost {
 	id?: string;
 	title?: string;
 	author?: string;
+	subreddit?: string;
+	subreddit_name_prefixed?: string;
 	created_utc?: number;
 	score?: number;
 	num_comments?: number;
@@ -168,8 +170,15 @@ function metadataOf(post: RedditPost): MediaMetadata {
 	return {
 		title: post.title,
 		author: post.author
-			? { displayName: post.author, handle: `u/${post.author}` }
+			? {
+					displayName: post.author,
+					handle: `u/${post.author}`,
+					profileUrl: `https://www.reddit.com/user/${post.author}`,
+				}
 			: undefined,
+		place:
+			post.subreddit_name_prefixed ??
+			(post.subreddit ? `r/${post.subreddit}` : undefined),
 		date: post.created_utc
 			? new Date(post.created_utc * 1000).toISOString()
 			: undefined,

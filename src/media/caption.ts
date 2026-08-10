@@ -1,4 +1,35 @@
-import type { MediaMetadata } from "../providers/types.ts";
+import {
+	expandableBlockquote,
+	type FormattableString,
+	format,
+	join,
+	link,
+} from "gramio";
+import type {
+	CaptionLine,
+	CaptionOptions,
+	MediaAuthor,
+	MediaMetadata,
+	StatKey,
+} from "../providers/types.ts";
+
+/** Emoji prefix per stat type. */
+export const STAT_ICONS: Record<StatKey, string> = {
+	likes: "❤️",
+	views: "👁",
+	bookmarks: "🔖",
+	retweets: "🔁",
+	replies: "💬",
+};
+
+/** Default stat order, shared by every provider that doesn't override it. */
+export const DEFAULT_STAT_ORDER: readonly StatKey[] = [
+	"likes",
+	"retweets",
+	"replies",
+	"views",
+	"bookmarks",
+];
 
 function formatCount(value: number): string {
 	const format = (scaled: number, suffix: string) =>
@@ -8,57 +39,154 @@ function formatCount(value: number): string {
 	return String(value);
 }
 
-function formatDate(value: string): string {
-	const date = new Date(value);
-	if (Number.isNaN(date.getTime())) return "";
-	const day = String(date.getDate()).padStart(2, "0");
-	const month = String(date.getMonth() + 1).padStart(2, "0");
-	return `${day}.${month}.${date.getFullYear()}`;
+const MINUTE = 60_000;
+const HOUR = 3_600_000;
+const DAY = 86_400_000;
+
+/** "2 ч. назад" / "3 д. назад" — null once older than 14 days. */
+function relativeAge(ageMs: number): string | null {
+	if (ageMs < 0) return null;
+	if (ageMs < MINUTE) return "только что";
+	if (ageMs < HOUR) return `${Math.floor(ageMs / MINUTE)} мин. назад`;
+	if (ageMs < DAY) return `${Math.floor(ageMs / HOUR)} ч. назад`;
+	if (ageMs <= 14 * DAY) return `${Math.floor(ageMs / DAY)} д. назад`;
+	return null;
 }
 
-/** Builds a plain-text caption for media sent from the given metadata. */
-export function buildCaption(
-	metadata: MediaMetadata,
-	sourceUrl?: string,
-): string {
-	const lines: string[] = [];
+/** `DD.MM[.YY] HH:MM (относительно)` — year shown only when it differs. */
+function formatDate(value: string, now = new Date()): string {
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return "";
 
-	if (metadata.title) lines.push(`📌 ${metadata.title}`);
-	if (metadata.author) {
-		const author = metadata.author.handle
-			? `${metadata.author.displayName} (@${metadata.author.handle})`
-			: metadata.author.displayName;
-		lines.push(`👤 ${author}`);
+	const pad = (n: number) => String(n).padStart(2, "0");
+	const day = pad(date.getUTCDate());
+	const month = pad(date.getUTCMonth() + 1);
+	const time = `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`;
+	const datePart =
+		date.getUTCFullYear() === now.getUTCFullYear()
+			? `${day}.${month}`
+			: `${day}.${month}.${pad(date.getUTCFullYear() % 100)}`;
+	const relative = relativeAge(now.getTime() - date.getTime());
+
+	return relative ? `${datePart} ${time} (${relative})` : `${datePart} ${time}`;
+}
+
+/**
+ * Assembles a media caption line by line. Start from `captionFor` to get the
+ * standard layout, then append provider-specific lines as needed.
+ */
+export class CaptionBuilder {
+	private readonly lines: Array<string | FormattableString> = [];
+	private hasContent = false;
+
+	/**
+	 * Author line with an optional place of publication:
+	 * `👤 Name (@handle) - r/subreddit`. The name becomes a profile link
+	 * when `profileUrl` is present.
+	 */
+	author(author?: MediaAuthor, place?: string): this {
+		if (!author) return this;
+		const handle = author.handle
+			? author.displayName
+				? ` (@${author.handle})`
+				: `@${author.handle}`
+			: "";
+		const name = `${author.displayName}${handle}`;
+		const authorLine = author.profileUrl
+			? link(`👤 ${name}`, author.profileUrl)
+			: `👤 ${name}`;
+		this.lines.push(place ? format`${authorLine} - ${place}` : authorLine);
+		return this;
 	}
 
-	const stats: string[] = [];
-	if (metadata.likes !== undefined)
-		stats.push(`❤️ ${formatCount(metadata.likes)}`);
-	if (metadata.retweets !== undefined)
-		stats.push(`🔁 ${formatCount(metadata.retweets)}`);
-	if (metadata.replies !== undefined)
-		stats.push(`💬 ${formatCount(metadata.replies)}`);
-	if (metadata.views !== undefined)
-		stats.push(`👁 ${formatCount(metadata.views)}`);
-	if (metadata.bookmarks !== undefined)
-		stats.push(`🔖 ${formatCount(metadata.bookmarks)}`);
-	if (stats.length > 0) lines.push(stats.join("  "));
-
-	if (metadata.date) {
-		const date = formatDate(metadata.date);
-		if (date) lines.push(`🗓 ${date}`);
+	/** Main post text, wrapped in a collapsible quote. */
+	text(value?: string): this {
+		if (value) {
+			this.lines.push(expandableBlockquote(value));
+			this.hasContent = true;
+		}
+		return this;
 	}
 
-	if (metadata.tags && metadata.tags.length > 0) {
-		lines.push(
-			metadata.tags
-				.slice(0, 10)
+	/** Separate hashtags. Providers whose tags are already in the text skip this. */
+	tags(values?: string[], max = 10): this {
+		if (!values || values.length === 0) return this;
+		this.lines.push(
+			values
+				.slice(0, max)
 				.map((tag) => `#${tag}`)
 				.join(" "),
 		);
+		this.hasContent = true;
+		return this;
 	}
 
-	if (sourceUrl) lines.push(`\n🔗 ${sourceUrl}`);
+	/** Blank line separating the content block from the metadata block. */
+	separator(): this {
+		if (this.hasContent && this.lines.at(-1) !== "") this.lines.push("");
+		return this;
+	}
 
-	return lines.join("\n");
+	/** Renders all present stats as one line, in the given (or default) order. */
+	stats(
+		metadata: Pick<MediaMetadata, StatKey>,
+		order: readonly StatKey[] = DEFAULT_STAT_ORDER,
+	): this {
+		const values: string[] = [];
+		for (const key of order) {
+			const value = metadata[key];
+			if (value !== undefined)
+				values.push(`${STAT_ICONS[key]} ${formatCount(value)}`);
+		}
+		if (values.length > 0) this.lines.push(values.join("  "));
+		return this;
+	}
+
+	/** `🗓 DD.MM[.YY] HH:MM (относительно)` in UTC. */
+	date(value?: string, now?: Date): this {
+		if (!value) return this;
+		const formatted = formatDate(value, now);
+		if (formatted) this.lines.push(`🗓 ${formatted}`);
+		return this;
+	}
+
+	/** Appends arbitrary lines, rendered as `icon text` (text-only when icon is empty). */
+	extra(...lines: CaptionLine[]): this {
+		for (const line of lines) {
+			if (line.text)
+				this.lines.push(line.icon ? `${line.icon} ${line.text}` : line.text);
+		}
+		return this;
+	}
+
+	/** Appends the source link as a clickable line, separated by a blank line. */
+	sourceLink(url?: string): this {
+		if (!url) return this;
+		if (this.lines.length > 0 && this.lines.at(-1) !== "") this.lines.push("");
+		this.lines.push(link(`🔗 ${url}`, url));
+		return this;
+	}
+
+	build(): FormattableString {
+		return join(this.lines, "\n");
+	}
+}
+
+/**
+ * Builds the standard media caption from metadata:
+ * author (+place), main text as a quote, tags, then stats and date.
+ * Provider-specific tweaks (stat order, extra lines) come from `options`.
+ */
+export function captionFor(
+	metadata: MediaMetadata,
+	options?: CaptionOptions,
+): CaptionBuilder {
+	return new CaptionBuilder()
+		.author(metadata.author, metadata.place)
+		.text(metadata.title)
+		.tags(metadata.tags)
+		.separator()
+		.stats(metadata, options?.statsOrder)
+		.date(metadata.date)
+		.extra(...(options?.extra ?? []));
 }

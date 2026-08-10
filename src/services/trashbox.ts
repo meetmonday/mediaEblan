@@ -1,7 +1,7 @@
 import { markdownToFormattable } from "@gramio/format/markdown";
 import { format } from "gramio";
 import { NodeHtmlMarkdown } from "node-html-markdown";
-import { buildCaption } from "../media/caption.ts";
+import { captionFor } from "../media/caption.ts";
 import { fetchJson, fetchWithTimeout } from "../providers/http.ts";
 import type { MediaMetadata } from "../providers/types.ts";
 
@@ -195,7 +195,7 @@ export function buildCommentMessage(
 			: undefined,
 	};
 	return format`
-		${buildCaption(metadata)}
+		${captionFor(metadata).build()}
 
 		${markdownToFormattable(htmlCleaner(comment.content, !includeImages))}
 

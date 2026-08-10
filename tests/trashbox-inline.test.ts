@@ -1,10 +1,7 @@
 import "./setup.ts";
-import { describe, expect, mock, test } from "bun:test";
-import { join } from "node:path";
+import { afterAll, describe, expect, test } from "bun:test";
 import { TelegramTestEnvironment } from "@gramio/test";
 import { bot } from "../src/bot.ts";
-
-const servicePath = join(import.meta.dir, "../src/services/trashbox.ts");
 
 const textComment = {
 	comm_id: "1288345",
@@ -19,34 +16,35 @@ const textComment = {
 const photoComment = {
 	...textComment,
 	content:
-		"Помню<br/><img src='/files/2554043_184a9c/1000341956.webp.png' data-trash-lightbox2='256;256;/files/2554043_184a9c/1000341956.webp.png;-thumb.jpg 90 90,-orig.jpg 256 256'/>",
+		"Помню<br/><img src=\"/files/2554043_184a9c/1000341956.webp.png\" data-trash-lightbox2='256;256;/files/2554043_184a9c/1000341956.webp.png;-thumb.jpg 90 90,-orig.jpg 256 256'/>",
 };
 
-class MockTrashboxError extends Error {}
-
 let comment: typeof textComment | null = textComment;
-let parseError: Error | null = null;
 
-mock.module(servicePath, () => ({
-	TrashboxError: MockTrashboxError,
-	findCommentUrl: (text: string) => {
-		const match = text.match(/https?:\/\/\S+/i);
-		if (!match) return null;
-		const url = new URL(match[0]);
-		return /#div_comment_/.test(url.hash) ? url : null;
-	},
-	resolveCommentUrl: async () => {
-		if (parseError) throw parseError;
-		return { topicId: 132125, commentId: 1288345, host: "trashbox.ru" };
-	},
-	fetchComment: async () => comment,
-	commentMediaSources: () => [],
-	firstImgSrc: () => null,
-	buildCommentMessage: (_c, url, includeImages = true) =>
-		includeImages && _c.content.includes("<img")
-			? `👤 ${_c.login}\n\nПомню\n\n🖼 https://trashbox.ru/files/2554043_184a9c/1000341956.webp.png\n\n🔗 ${url}`
-			: `👤 ${_c.login} — ${url}`,
-}));
+// Mock only the transport so the real service logic (URL parsing, comment
+// building) is exercised and trashbox-unit.test.ts keeps the real module.
+const realFetch = globalThis.fetch;
+const mockedFetch = async (input: RequestInfo | URL): Promise<Response> => {
+	const url = String(input);
+	if (url.includes("/link/")) {
+		return new Response('<div data-topic-id="132125"></div>');
+	}
+	if (url.includes("/api_noauth.php")) {
+		return new Response(
+			JSON.stringify({ comments: comment ? [comment] : [] }),
+			{
+				headers: { "content-type": "application/json" },
+			},
+		);
+	}
+	if (url.includes("/files/")) return new Response("fake-jpeg");
+	throw new Error(`Unexpected fetch in tests: ${url}`);
+};
+globalThis.fetch = mockedFetch as typeof fetch;
+
+afterAll(() => {
+	globalThis.fetch = realFetch;
+});
 
 describe("flow: inline trashbox comments", () => {
 	test("comment with a photo → article with the image embedded as a text link", async () => {
@@ -55,7 +53,7 @@ describe("flow: inline trashbox comments", () => {
 		const user = env.createUser({ first_name: "Tester" });
 
 		await user.sendInlineQuery(
-			"https://trashbox.ru/link/oduvanchik-android#div_comment_1435158",
+			"https://trashbox.ru/link/oduvanchik-android#div_comment_1288345",
 		);
 
 		const call = env.lastApiCall("answerInlineQuery");
@@ -114,20 +112,15 @@ describe("flow: inline trashbox comments", () => {
 
 	test("invalid comment link → empty results + open-bot button", async () => {
 		comment = textComment;
-		parseError = new MockTrashboxError("Некорректная ссылка");
-		try {
-			const env = new TelegramTestEnvironment(bot);
-			const user = env.createUser({ first_name: "Tester" });
+		const env = new TelegramTestEnvironment(bot);
+		const user = env.createUser({ first_name: "Tester" });
 
-			await user.sendInlineQuery(
-				"https://trashbox.ru/topics/132125#div_comment_",
-			);
+		await user.sendInlineQuery(
+			"https://trashbox.ru/topics/132125#div_comment_",
+		);
 
-			const call = env.lastApiCall("answerInlineQuery");
-			expect(call?.params.results).toHaveLength(0);
-			expect(call?.params.button?.text).toBe("Открыть бот и вставить ссылку");
-		} finally {
-			parseError = null;
-		}
+		const call = env.lastApiCall("answerInlineQuery");
+		expect(call?.params.results).toHaveLength(0);
+		expect(call?.params.button?.text).toBe("Открыть бот и вставить ссылку");
 	});
 });

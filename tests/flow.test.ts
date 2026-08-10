@@ -75,6 +75,7 @@ const fakeProvider: Provider = {
 mock.module(registryPath, () => ({
 	providers: [],
 	listSupportedSites: () => ["Example"],
+	supportedSitesText: () => "• Example",
 	findMediaUrl: (text: string) => {
 		const raw = text.match(/https?:\/\/\S+/i)?.[0];
 		if (!raw) return null;
@@ -104,12 +105,14 @@ describe("flow: chat media", () => {
 
 		const call = env.lastApiCall("sendPhoto");
 		expect(call).toBeDefined();
-		expect(call?.params.caption).toContain("📌 Солнечный день");
-		expect(call?.params.caption).toContain("👤 ArtLover (@art_lover)");
-		expect(call?.params.caption).toContain("❤️ 1,2M");
-		expect(call?.params.caption).toContain("🔖 88K");
-		expect(call?.params.caption).toContain("🗓 01.08.2026");
-		expect(call?.params.caption).toContain("#солнце #пейзаж");
+		expect(call?.params.caption?.toString()).toContain("Солнечный день");
+		expect(call?.params.caption?.toString()).toContain(
+			"👤 ArtLover (@art_lover)",
+		);
+		expect(call?.params.caption?.toString()).toContain("❤️ 1,2M");
+		expect(call?.params.caption?.toString()).toContain("🔖 88K");
+		expect(call?.params.caption?.toString()).toContain("🗓 01.08 03:00");
+		expect(call?.params.caption?.toString()).toContain("#солнце #пейзаж");
 	});
 
 	test("video link → sendVideo with caption", async () => {
@@ -120,8 +123,10 @@ describe("flow: chat media", () => {
 
 		const call = env.lastApiCall("sendVideo");
 		expect(call).toBeDefined();
-		expect(call?.params.caption).toContain("📌 Ролик про кота");
-		expect(call?.params.caption).toContain("👤 VideoCat (@video_cat)");
+		expect(call?.params.caption?.toString()).toContain("Ролик про кота");
+		expect(call?.params.caption?.toString()).toContain(
+			"👤 VideoCat (@video_cat)",
+		);
 	});
 
 	test("multi-image link → one media group, caption on the first item", async () => {
@@ -136,7 +141,7 @@ describe("flow: chat media", () => {
 		const media = call?.params.media;
 		expect(media).toHaveLength(2);
 		expect(media?.[0]?.type).toBe("photo");
-		expect(media?.[0]?.caption).toContain("📌 Солнечный день");
+		expect(media?.[0]?.caption?.toString()).toContain("Солнечный день");
 		expect(media?.[1]?.caption).toBeUndefined();
 	});
 
@@ -151,7 +156,7 @@ describe("flow: chat media", () => {
 		const media = call?.params.media;
 		expect(media).toHaveLength(2);
 		expect(media?.[0]?.type).toBe("photo");
-		expect(media?.[0]?.caption).toContain("📌 Смешанный пост");
+		expect(media?.[0]?.caption?.toString()).toContain("Смешанный пост");
 		expect(media?.[1]?.type).toBe("video");
 	});
 
@@ -162,7 +167,7 @@ describe("flow: chat media", () => {
 		await user.sendMessage("https://other.example.com/post");
 
 		expect(env.lastApiCall("sendMessage")?.params.text).toBe(
-			"❌ Поддерживаются ссылки: Example",
+			"❌ Поддерживаются ссылки:\n• Example",
 		);
 	});
 
@@ -305,10 +310,10 @@ describe("flow: inline", () => {
 
 		expect(env.lastApiCall("sendPhoto")).toBeDefined();
 		expect(env.filterApiCalls("replyWithPhoto")).toHaveLength(0);
-		expect(env.lastApiCall("sendPhoto")?.params.caption).toContain(
-			"📌 Солнечный день",
+		expect(env.lastApiCall("sendPhoto")?.params.caption?.toString()).toContain(
+			"Солнечный день",
 		);
-		expect(env.lastApiCall("sendPhoto")?.params.caption).toContain(
+		expect(env.lastApiCall("sendPhoto")?.params.caption?.toString()).toContain(
 			"🔗 https://example.com/deep-link",
 		);
 		expect(env.filterApiCalls("deleteMessage")).toHaveLength(1);

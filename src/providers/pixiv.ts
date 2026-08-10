@@ -100,7 +100,11 @@ function metadataOf(illust: IllustBody): MediaMetadata {
 		title: illust.illustTitle,
 		author:
 			illust.userName && illust.userId
-				? { displayName: illust.userName, handle: illust.userId }
+				? {
+						displayName: illust.userName,
+						handle: illust.userId,
+						profileUrl: `https://www.pixiv.net/user/${illust.userId}`,
+					}
 				: illust.userName
 					? { displayName: illust.userName }
 					: undefined,

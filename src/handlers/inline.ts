@@ -1,7 +1,7 @@
 import type { TelegramInlineQueryResult } from "@gramio/types";
 import { Composer, InlineQueryResult, InputMessageContent } from "gramio";
 import { mediaCache } from "../media/cache.ts";
-import { buildCaption } from "../media/caption.ts";
+import { captionFor } from "../media/caption.ts";
 import { composer } from "../plugins/index.ts";
 import { findMediaUrl, resolveProvider } from "../providers/registry.ts";
 import type { DirectMediaResult, MediaMetadata } from "../providers/types.ts";
@@ -45,10 +45,12 @@ function resultTitle(
 }
 
 function toInlineResults(
-	{ metadata, items }: DirectMediaResult,
+	{ metadata, items, caption }: DirectMediaResult,
 	sourceUrl: string,
 ): TelegramInlineQueryResult[] {
-	const caption = buildCaption(metadata, sourceUrl);
+	const captionText = captionFor(metadata, caption)
+		.sourceLink(sourceUrl)
+		.build();
 	const results: TelegramInlineQueryResult[] = [];
 	for (const [index, item] of items.entries()) {
 		if (item.kind === "photo") {
@@ -58,7 +60,7 @@ function toInlineResults(
 					item.url,
 					item.thumbnailUrl ?? item.url,
 					{
-						caption,
+						caption: captionText,
 						title: resultTitle(metadata, "Фото", index),
 					},
 				),
@@ -71,7 +73,7 @@ function toInlineResults(
 					item.url,
 					item.thumbnailUrl,
 					{
-						caption,
+						caption: captionText,
 					},
 				),
 			);
@@ -130,16 +132,20 @@ export const inlineComposer = new Composer()
 		try {
 			const cached = mediaCache.get(url.toString());
 			if (cached) {
-				const caption = buildCaption(cached.metadata, url.toString());
+				const captionText = captionFor(cached.metadata, cached.caption)
+					.sourceLink(url.toString())
+					.build();
 				const result =
 					cached.kind === "photo"
-						? InlineQueryResult.cached.photo("0", cached.fileId, { caption })
+						? InlineQueryResult.cached.photo("0", cached.fileId, {
+								caption: captionText,
+							})
 						: InlineQueryResult.cached.video(
 								"0",
 								cached.metadata.title ?? "Видео",
 								cached.fileId,
 								{
-									caption,
+									caption: captionText,
 								},
 							);
 				return context.answer([result], {

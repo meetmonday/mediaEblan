@@ -1,11 +1,7 @@
 import "./setup.ts";
-import { describe, expect, mock, test } from "bun:test";
-import { join } from "node:path";
+import { afterAll, describe, expect, test } from "bun:test";
 import { TelegramTestEnvironment } from "@gramio/test";
 import { bot } from "../src/bot.ts";
-
-const servicePath = join(import.meta.dir, "../src/services/trashbox.ts");
-const httpPath = join(import.meta.dir, "../src/providers/http.ts");
 
 const comment = {
 	comm_id: "1426028",
@@ -21,43 +17,34 @@ const comment = {
 const mediaComment = {
 	...comment,
 	content:
-		"Скрин<br/><img src='/files/2555000_be982b/1001288496.jpg_min.jpg' data-trash-lightbox2='1600;2560;/files/2555000_be982b/1001288496.jpg;'/>",
+		"Скрин<br/><img src=\"/files/2555000_be982b/1001288496.jpg_min.jpg\" data-trash-lightbox2='1600;2560;/files/2555000_be982b/1001288496.jpg;'/>",
 };
-
-class MockTrashboxError extends Error {}
 
 let commentFound = true;
 let useMediaComment = false;
-let parseError: Error | null = null;
 
-mock.module(httpPath, () => ({
-	HttpError: class HttpError extends Error {},
-	downloadTo: async (_url: string, outPath: string) => {
-		await Bun.write(outPath, Buffer.from("fake-jpeg"));
-	},
-}));
+// The real trashbox service hits the trashbox API over the network. Mock the
+// transport (`globalThis.fetch`) instead of the service module itself, so the
+// unit tests in trashbox-unit.test.ts always see the real implementation.
+const realFetch = globalThis.fetch;
+const mockedFetch = async (input: RequestInfo | URL): Promise<Response> => {
+	const url = String(input);
+	if (url.includes("/api_noauth.php")) {
+		const comments = commentFound
+			? [useMediaComment ? mediaComment : comment]
+			: [];
+		return new Response(JSON.stringify({ comments }), {
+			headers: { "content-type": "application/json" },
+		});
+	}
+	if (url.includes("/files/")) return new Response("fake-jpeg");
+	throw new Error(`Unexpected fetch in tests: ${url}`);
+};
+globalThis.fetch = mockedFetch as typeof fetch;
 
-mock.module(servicePath, () => ({
-	TrashboxError: MockTrashboxError,
-	findCommentUrl: (text: string) => {
-		const match = text.match(/https?:\/\/\S+/i);
-		if (!match) return null;
-		const url = new URL(match[0]);
-		return /#div_comment_/.test(url.hash) ? url : null;
-	},
-	resolveCommentUrl: async () => {
-		if (parseError) throw parseError;
-		return { topicId: 207704, commentId: 1426028, host: "trashbox.ru" };
-	},
-	fetchComment: async () =>
-		commentFound ? (useMediaComment ? mediaComment : comment) : null,
-	commentMediaSources: (html: string) =>
-		html.includes("<img")
-			? ["https://trashbox.ru/files/2555000_be982b/1001288496.jpg"]
-			: [],
-	firstImgSrc: () => null,
-	buildCommentMessage: (_c, url) => `👤 ${_c.login} — ${url}`,
-}));
+afterAll(() => {
+	globalThis.fetch = realFetch;
+});
 
 describe("flow: trashbox comments", () => {
 	test("comment link → formatted comment, user message kept", async () => {
@@ -70,7 +57,7 @@ describe("flow: trashbox comments", () => {
 
 		const call = env.lastApiCall("sendMessage");
 		expect(call).toBeDefined();
-		expect(call?.params.text).toContain("Тестер");
+		expect(call?.params.text?.toString()).toContain("Тестер");
 		expect(call?.params.link_preview_options?.is_disabled).toBe(true);
 		expect(env.filterApiCalls("deleteMessage")).toHaveLength(0);
 	});
@@ -87,7 +74,7 @@ describe("flow: trashbox comments", () => {
 
 			const call = env.lastApiCall("sendPhoto");
 			expect(call).toBeDefined();
-			expect(call?.params.caption).toContain("Тестер");
+			expect(call?.params.caption?.toString()).toContain("Тестер");
 			expect(env.lastApiCall("sendMessage")).toBeUndefined();
 		} finally {
 			useMediaComment = false;
@@ -96,32 +83,31 @@ describe("flow: trashbox comments", () => {
 
 	test("comment not found → error reply", async () => {
 		commentFound = false;
-		const env = new TelegramTestEnvironment(bot);
-		const user = env.createUser({ first_name: "Tester" });
-
-		await user.sendMessage(
-			"https://trashbox.ru/topics/207704/luchshij-brauzer#div_comment_9999999",
-		);
-
-		expect(env.lastApiCall("sendMessage")?.params.text).toBe(
-			"❌ Комментарий не найден",
-		);
-	});
-
-	test("invalid comment link → error reply", async () => {
-		parseError = new MockTrashboxError("Некорректная ссылка");
 		try {
 			const env = new TelegramTestEnvironment(bot);
 			const user = env.createUser({ first_name: "Tester" });
 
-			await user.sendMessage("https://trashbox.ru/topics/207704#div_comment_");
+			await user.sendMessage(
+				"https://trashbox.ru/topics/207704/luchshij-brauzer#div_comment_9999999",
+			);
 
 			expect(env.lastApiCall("sendMessage")?.params.text).toBe(
-				"❌ Некорректная ссылка",
+				"❌ Комментарий не найден",
 			);
 		} finally {
-			parseError = null;
+			commentFound = true;
 		}
+	});
+
+	test("invalid comment link → error reply", async () => {
+		const env = new TelegramTestEnvironment(bot);
+		const user = env.createUser({ first_name: "Tester" });
+
+		await user.sendMessage("https://trashbox.ru/topics/207704#div_comment_");
+
+		expect(env.lastApiCall("sendMessage")?.params.text).toBe(
+			"❌ Некорректная ссылка",
+		);
 	});
 
 	test("plain text without a comment link → no reply", async () => {

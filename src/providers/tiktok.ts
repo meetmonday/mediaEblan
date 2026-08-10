@@ -2,6 +2,7 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { downloadTo, fetchJson } from "./http.ts";
 import type {
+	CaptionOptions,
 	DirectMediaItem,
 	DirectMediaResult,
 	MediaItem,
@@ -19,6 +20,11 @@ const TIKWM_API = "https://www.tikwm.com/api/";
 const MEDIA_HEADERS: Record<string, string> = {
 	"User-Agent":
 		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+};
+
+/** TikTok is view-first — plays matter more than likes. */
+const TIKTOK_CAPTION: CaptionOptions = {
+	statsOrder: ["views", "likes", "bookmarks", "replies"],
 };
 
 /** Matches every tiktok.com host, including vt./vm. share short links. */
@@ -57,6 +63,9 @@ function metadataOf(data: TikTokMediaData): MediaMetadata {
 			? {
 					displayName: data.author.nickname,
 					handle: data.author.unique_id,
+					profileUrl: data.author.unique_id
+						? `https://www.tiktok.com/@${data.author.unique_id}`
+						: undefined,
 				}
 			: undefined,
 		date: data.create_time
@@ -121,7 +130,7 @@ async function fetchTikTok(
 		throw error;
 	}
 
-	return { metadata, items };
+	return { metadata, items, caption: TIKTOK_CAPTION };
 }
 
 async function resolveDirectTikTok(url: URL): Promise<DirectMediaResult> {
@@ -138,7 +147,7 @@ async function resolveDirectTikTok(url: URL): Promise<DirectMediaResult> {
 	}
 	if (items.length === 0) throw new TikTokError("В видео не найдено медиа");
 
-	return { metadata, items };
+	return { metadata, items, caption: TIKTOK_CAPTION };
 }
 
 export const tiktokProvider: Provider = {

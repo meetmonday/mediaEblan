@@ -1,9 +1,15 @@
-import type { MediaKind, MediaMetadata } from "../providers/types.ts";
+import type {
+	CaptionOptions,
+	MediaKind,
+	MediaMetadata,
+} from "../providers/types.ts";
 
 export interface CachedMedia {
 	kind: MediaKind;
 	fileId: string;
 	metadata: MediaMetadata;
+	/** Presentation tweaks, kept so cached hits render the same caption. */
+	caption?: CaptionOptions;
 }
 
 const MAX_ENTRIES = 512;

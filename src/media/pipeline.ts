@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
+import type { FormattableString } from "gramio";
 import { config } from "../config.ts";
 import { HttpError } from "../providers/http.ts";
-import { listSupportedSites, resolveProvider } from "../providers/registry.ts";
+import { resolveProvider, supportedSitesText } from "../providers/registry.ts";
 import type {
 	MediaItem,
 	MediaKind,
@@ -11,7 +12,7 @@ import type {
 } from "../providers/types.ts";
 import { verrou } from "../services/locks.ts";
 import { mediaCache } from "./cache.ts";
-import { buildCaption } from "./caption.ts";
+import { captionFor } from "./caption.ts";
 import { compressVideo, fileSize } from "./ffmpeg.ts";
 
 /**
@@ -21,11 +22,20 @@ import { compressVideo, fileSize } from "./ffmpeg.ts";
 export interface MediaSender {
 	chatAction(action: "upload_photo" | "upload_video"): Promise<unknown>;
 	/** `input` is either a local path or an already-known file_id. */
-	sendPhoto(input: string, caption?: string): Promise<{ fileId: string }>;
+	sendPhoto(
+		input: string,
+		caption?: FormattableString,
+	): Promise<{ fileId: string }>;
 	/** `input` is either a local path or an already-known file_id. */
-	sendVideo(input: string, caption?: string): Promise<{ fileId: string }>;
+	sendVideo(
+		input: string,
+		caption?: FormattableString,
+	): Promise<{ fileId: string }>;
 	/** Sends several items as a single album. Caption lands on the first item. */
-	sendMediaGroup(inputs: MediaGroupInput[], caption?: string): Promise<unknown>;
+	sendMediaGroup(
+		inputs: MediaGroupInput[],
+		caption?: FormattableString,
+	): Promise<unknown>;
 }
 
 export interface MediaGroupInput {
@@ -109,10 +119,9 @@ export async function processMedia(
 		if (cached) {
 			await sender.sendPhoto(
 				cached.fileId,
-				buildCaption(
-					cached.metadata,
-					includeSourceLink ? sourceUrl : undefined,
-				),
+				captionFor(cached.metadata, cached.caption)
+					.sourceLink(includeSourceLink ? sourceUrl : undefined)
+					.build(),
 			);
 			return;
 		}
@@ -121,7 +130,7 @@ export async function processMedia(
 		if (!provider) {
 			throw new MediaError(
 				"unsupported",
-				`Поддерживаются ссылки: ${listSupportedSites().join(", ")}`,
+				`Поддерживаются ссылки:\n${supportedSitesText()}`,
 			);
 		}
 
@@ -135,10 +144,9 @@ export async function processMedia(
 		if (result.items.length === 0)
 			throw new MediaError("no-media", "В ссылке не найдено медиа");
 
-		const caption = buildCaption(
-			result.metadata,
-			includeSourceLink ? sourceUrl : undefined,
-		);
+		const caption = captionFor(result.metadata, result.caption)
+			.sourceLink(includeSourceLink ? sourceUrl : undefined)
+			.build();
 		try {
 			const prepare = async (item: MediaItem): Promise<MediaGroupInput> => {
 				await sender.chatAction(
@@ -171,7 +179,12 @@ export async function processMedia(
 					kind === "photo"
 						? await sender.sendPhoto(input, caption)
 						: await sender.sendVideo(input, caption);
-				mediaCache.set(sourceUrl, { kind, fileId, metadata: result.metadata });
+				mediaCache.set(sourceUrl, {
+					kind,
+					fileId,
+					metadata: result.metadata,
+					caption: result.caption,
+				});
 			} else {
 				const inputs: MediaGroupInput[] = [];
 				for (const item of result.items) inputs.push(await prepare(item));

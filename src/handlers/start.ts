@@ -1,11 +1,14 @@
 import { bold, Composer, type FormattableString, format } from "gramio";
 import { sendMedia } from "../media/sender.ts";
 import { composer } from "../plugins/index.ts";
-import { listSupportedSites } from "../providers/registry.ts";
+import {
+	listSupportedSites,
+	supportedSitesText,
+} from "../providers/registry.ts";
 import { pendingLinks } from "../services/pending-links.ts";
 
 function welcomeMessage(): FormattableString {
-	return format`${bold("mediaEblan")}\n\nПришли ссылку — пришлю медиа сюда.\n\nПоддерживаются: ${listSupportedSites().join(", ")}\n\nВ любом чате бота можно вызвать через инлайн-режим.`;
+	return format`${bold("mediaEblan")}\n\nПришли ссылку — пришлю медиа сюда.\n\nПоддерживаются:\n${supportedSitesText()}\n\nВ любом чате бота можно вызвать через инлайн-режим.`;
 }
 
 export const startComposer = new Composer()

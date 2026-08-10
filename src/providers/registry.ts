@@ -11,9 +11,27 @@ export const providers: Provider[] = [
 	redditProvider,
 ];
 
-/** Human-readable names of the sites supported by the registered providers. */
+/**
+ * Sites handled outside the provider registry — custom composers with their
+ * own download flow, e.g. Trashbox comments (src/handlers/trashbox.ts).
+ */
+const extraSites = ["Trashbox"];
+
+/** Human-readable names of all sites supported by the bot. */
 export function listSupportedSites(): string[] {
-	return [...new Set(providers.flatMap((provider) => provider.sites))];
+	return [
+		...new Set([
+			...providers.flatMap((provider) => provider.sites),
+			...extraSites,
+		]),
+	];
+}
+
+/** Supported sites as a bulleted list, one per line — for user-facing text. */
+export function supportedSitesText(): string {
+	return listSupportedSites()
+		.map((site) => `• ${site}`)
+		.join("\n");
 }
 
 const URL_PATTERN = /https?:\/\/[^\s<>"'()]+/gi;
