@@ -124,7 +124,8 @@ async function resolveDirectTikTok(url: URL): Promise<DirectMediaResult> {
 		for (const src of data.images) {
 			items.push({ kind: "photo", url: src });
 		}
-	} else if (data.play && data.cover) {
+	} else if (data.play) {
+		// No cover → video without a thumbnail; Telegram takes a frame itself.
 		items.push({ kind: "video", url: data.play, thumbnailUrl: data.cover });
 	}
 	if (items.length === 0)

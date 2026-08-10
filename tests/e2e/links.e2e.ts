@@ -20,6 +20,10 @@ for (const link of links) {
 }
 
 function extractId(url: string): string {
+	const comment = url.match(/#div_comment_(\d+)/);
+	if (comment) return `comment-${comment[1]}`;
+	const linkSlug = url.match(/\/link\/([a-zA-Z0-9_-]+)/);
+	if (linkSlug) return linkSlug[1];
 	const match = url.match(
 		/(?:status|artworks|comments|gallery)\/([a-zA-Z0-9]+)|(?:\/s\/)([a-zA-Z0-9]+)/,
 	);

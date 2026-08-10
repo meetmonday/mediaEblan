@@ -71,7 +71,7 @@ export interface DirectMediaItem {
 	kind: MediaKind;
 	/** Publicly fetchable URL Telegram can download itself. */
 	url: string;
-	/** Thumbnail URL — required for videos, optional for photos. */
+	/** Thumbnail URL for videos; when omitted Telegram uses the first frame. */
 	thumbnailUrl?: string;
 }
 

@@ -19,13 +19,14 @@ const IMG_HEADERS: Record<string, string> = {
 	}) as Record<string, string>),
 };
 
-/** Extracts the artwork id from pixiv.net URLs, or `null` if not a pixiv link. */
-export function extractIllustId(url: URL): string | null {
+/** Parses a pixiv.net artwork URL into `{ id }`, or `null` for other links. */
+export function parse(url: URL): { id: string } | null {
 	if (!url.hostname.endsWith("pixiv.net")) return null;
 	const artworks = url.pathname.match(/\/artworks\/(\d+)\/?$/);
-	if (artworks) return artworks[1] ?? null;
+	if (artworks) return artworks[1] ? { id: artworks[1] } : null;
 	if (url.pathname.startsWith("/member_illust.php")) {
-		return url.searchParams.get("illust_id");
+		const id = url.searchParams.get("illust_id");
+		return id ? { id } : null;
 	}
 	return null;
 }
@@ -118,14 +119,14 @@ export function proxyImageUrl(src: string): string {
 }
 
 async function resolveDirectPixiv(url: URL): Promise<DirectMediaResult> {
-	const id = extractIllustId(url);
-	if (!id)
+	const parsed = parse(url);
+	if (!parsed)
 		throw new ProviderError("pixiv", "Не удалось распознать ссылку Pixiv");
 	if (!config.PIXIV_INLINE_PROXY) {
 		throw new ProviderError("pixiv", "Pixiv инлайн-режим отключён");
 	}
 
-	const { illust, pages } = await fetchIllust(id);
+	const { illust, pages } = await fetchIllust(parsed.id);
 	const items: DirectMediaItem[] = pages.map((page) => {
 		const src = config.PIXIV_COOKIE ? page.urls.original : page.urls.regular;
 		if (!src)
@@ -142,13 +143,13 @@ async function resolveDirectPixiv(url: URL): Promise<DirectMediaResult> {
 export const pixivProvider: Provider = {
 	name: "pixiv",
 	sites: ["Pixiv"],
-	match: (url) => extractIllustId(url) !== null,
+	match: (url) => parse(url) !== null,
 	async fetch(url, downloadDir): Promise<ProviderResult> {
-		const id = extractIllustId(url);
-		if (!id)
+		const parsed = parse(url);
+		if (!parsed)
 			throw new ProviderError("pixiv", "Не удалось распознать ссылку Pixiv");
 
-		const { illust, pages } = await fetchIllust(id);
+		const { illust, pages } = await fetchIllust(parsed.id);
 
 		// Sequential — i.pximg.net throttles parallel connections from one IP.
 		const items = await downloadMediaSources(

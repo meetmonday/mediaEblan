@@ -1,7 +1,12 @@
 import { join } from "node:path";
 import { ProcError, runBinary } from "../services/proc.ts";
 import { ProviderError } from "./errors.ts";
-import { downloadMediaSources, kindFromPath, makeAuthor } from "./helpers.ts";
+import {
+	downloadMediaSources,
+	epochToIso,
+	kindFromPath,
+	makeAuthor,
+} from "./helpers.ts";
 import { fetchJson } from "./http.ts";
 import type {
 	DirectMediaItem,
@@ -12,15 +17,18 @@ import type {
 
 const TWEET_ID_PATTERN = /\/status\/(\d+)/;
 
-/** Extracts the tweet id from x.com / twitter.com URLs, or `null` if not a tweet link. */
-export function extractTweetId(url: URL): string | null {
+/** Parses an x.com / twitter.com status URL into `{ id }`, or `null` for other links. */
+export function parse(url: URL): { id: string } | null {
 	if (url.hostname !== "twitter.com" && url.hostname !== "x.com") return null;
-	return url.pathname.match(TWEET_ID_PATTERN)?.[1] ?? null;
+	const id = url.pathname.match(TWEET_ID_PATTERN)?.[1];
+	return id ? { id } : null;
 }
 
 interface FxTweet {
 	text?: string;
 	created_at?: string;
+	/** Unix seconds — normalized to ISO in `metadataOf` (see P6). */
+	created_timestamp?: number;
 	author?: {
 		name: string;
 		screen_name: string;
@@ -57,7 +65,9 @@ function metadataOf(tweet: FxTweet): ProviderResult["metadata"] {
 				? `https://x.com/${tweet.author.screen_name}`
 				: undefined,
 		}),
-		date: tweet.created_at,
+		date: tweet.created_timestamp
+			? epochToIso(tweet.created_timestamp)
+			: undefined,
 		likes: tweet.likes,
 		retweets: tweet.retweets,
 		replies: tweet.replies,
@@ -158,11 +168,11 @@ async function fetchViaYtDlp(
 
 /** Resolves directly-embeddable media URLs (for inline mode) via fxTwitter. */
 async function resolveDirectTweet(url: URL): Promise<DirectMediaResult> {
-	const id = extractTweetId(url);
-	if (!id)
+	const parsed = parse(url);
+	if (!parsed)
 		throw new ProviderError("twitter", "Не удалось распознать ссылку на твит");
 
-	const tweet = await fetchFxTweet(id);
+	const tweet = await fetchFxTweet(parsed.id);
 	if (!tweet) throw new ProviderError("twitter", "Не удалось получить твит");
 
 	const photos = tweet.media?.photos ?? [];
@@ -187,16 +197,16 @@ async function resolveDirectTweet(url: URL): Promise<DirectMediaResult> {
 export const twitterProvider: Provider = {
 	name: "twitter",
 	sites: ["X (Twitter)"],
-	match: (url) => extractTweetId(url) !== null,
+	match: (url) => parse(url) !== null,
 	async fetch(url, downloadDir): Promise<ProviderResult> {
-		const id = extractTweetId(url);
-		if (!id)
+		const parsed = parse(url);
+		if (!parsed)
 			throw new ProviderError(
 				"twitter",
 				"Не удалось распознать ссылку на твит",
 			);
 
-		const fx = await fetchViaFx(id, downloadDir);
+		const fx = await fetchViaFx(parsed.id, downloadDir);
 		if (fx) return fx;
 
 		return fetchViaYtDlp(url, downloadDir);

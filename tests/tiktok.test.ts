@@ -32,7 +32,9 @@ const imageData = {
 	],
 };
 
-let kind: "video" | "images" = "video";
+const noCoverData = { ...videoData, cover: undefined };
+
+let kind: "video" | "images" | "video-nocover" = "video";
 
 const realFetch = globalThis.fetch;
 
@@ -44,7 +46,12 @@ beforeAll(() => {
 				JSON.stringify({
 					code: 0,
 					msg: "success",
-					data: kind === "images" ? imageData : videoData,
+					data:
+						kind === "images"
+							? imageData
+							: kind === "video-nocover"
+								? noCoverData
+								: videoData,
 				}),
 				{ status: 200 },
 			);
@@ -99,6 +106,18 @@ describe("tiktok: resolveDirect (inline)", () => {
 		expect(result?.metadata.author?.handle).toBe("ruffescentral");
 		expect(result?.metadata.likes).toBe(3_966);
 		expect(result?.metadata.views).toBe(26_405);
+	});
+
+	test("video without cover → video with no thumbnail", async () => {
+		kind = "video-nocover";
+		const result = await tiktokProvider.resolveDirect?.(
+			new URL("https://vt.tiktok.com/ZS4C6dCgT/"),
+		);
+
+		expect(result?.items).toHaveLength(1);
+		expect(result?.items[0]?.kind).toBe("video");
+		expect(result?.items[0]?.url).toBe(noCoverData.play);
+		expect(result?.items[0]?.thumbnailUrl).toBeUndefined();
 	});
 
 	test("image post → one photo per image", async () => {

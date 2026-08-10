@@ -9,6 +9,10 @@ export const config = {
 
 	LOCK_STORE: env.get("LOCK_STORE").default("memory").asEnum(["memory"]),
 
+	// NOTE: provider settings below (PIXIV_*, REDDIT_*) are read once at
+	// module load inside src/providers/*. Provider factories are deferred —
+	// configure these env vars before the bot starts.
+
 	// Pixiv PHPSESSID — allows full-resolution and R-18 downloads
 	PIXIV_COOKIE: env.get("PIXIV_COOKIE").default("").asString(),
 

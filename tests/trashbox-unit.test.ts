@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+	commentMediaSources,
 	commentMessage,
 	findCommentUrl,
+	firstImgSrc,
+	htmlCleaner,
 	resolveCommentUrl,
 } from "../src/services/trashbox.ts";
 
@@ -54,6 +57,78 @@ describe("trashbox comment URL parsing", () => {
 		);
 		if (!url) throw new Error("expected a comment URL");
 		await expect(resolveCommentUrl(url)).rejects.toThrow("Некорректная ссылка");
+	});
+});
+
+describe("trashbox html cleaner", () => {
+	test("strips disallowed tags but keeps their content", () => {
+		const cleaned = htmlCleaner(
+			'<div class="center">текст<br/><script>alert(1)</script></div>',
+		);
+		expect(cleaned).toContain("текст");
+		expect(cleaned).toContain("alert(1)");
+		expect(cleaned).not.toContain("<div");
+		expect(cleaned).not.toContain("<script");
+	});
+
+	test("keeps allowed formatting tags", () => {
+		const cleaned = htmlCleaner("<strong>Жирный</strong> <i>курсив</i>");
+		expect(cleaned).toContain("**Жирный**");
+		expect(cleaned).toContain("_курсив_");
+	});
+
+	test("with stripImages the images are removed entirely", () => {
+		const cleaned = htmlCleaner(
+			'Скрин<br/><img src="/files/2555000_be982b/1001288496.jpg_min.jpg"/>',
+			true,
+		);
+		expect(cleaned).not.toContain("files/");
+		expect(cleaned).not.toContain("🖼");
+	});
+
+	test("without stripImages images become clickable absolute links", () => {
+		const cleaned = htmlCleaner(
+			'<img src="/files/2555000_be982b/1001288496.jpg_min.jpg"/>',
+		);
+		expect(cleaned).toContain(
+			"https://trashbox.ru/files/2555000_be982b/1001288496.jpg_min.jpg",
+		);
+		expect(cleaned).toContain("🖼");
+	});
+});
+
+describe("trashbox image helpers", () => {
+	test("firstImgSrc makes relative /files/ paths absolute", () => {
+		expect(
+			firstImgSrc('<img src="/files/2555000_be982b/1001288496.jpg_min.jpg"/>'),
+		).toBe("https://trashbox.ru/files/2555000_be982b/1001288496.jpg_min.jpg");
+	});
+
+	test("firstImgSrc returns external URLs as-is and null without images", () => {
+		expect(firstImgSrc('<img src="https://ex.com/a.jpg">')).toBe(
+			"https://ex.com/a.jpg",
+		);
+		expect(firstImgSrc("просто текст")).toBeNull();
+	});
+
+	test("commentMediaSources prefers the full-size lightbox URL", () => {
+		const urls = commentMediaSources(
+			'<img src="/files/2555000_be982b/1001288496.jpg_min.jpg" data-trash-lightbox2="1600;2560;/files/2555000_be982b/1001288496.jpg;"/>',
+		);
+		expect(urls).toEqual([
+			"https://trashbox.ru/files/2555000_be982b/1001288496.jpg",
+		]);
+	});
+
+	test("commentMediaSources collects every image and skips src-less tags", () => {
+		const urls = commentMediaSources(
+			'<img src="/files/a_min.jpg"/><img/><img src="https://ex.com/b.jpg"/><img src="/files/c.jpg" data-trash-lightbox2="1;2;/files/c_orig.jpg;"/>',
+		);
+		expect(urls).toEqual([
+			"https://trashbox.ru/files/a_min.jpg",
+			"https://ex.com/b.jpg",
+			"https://trashbox.ru/files/c_orig.jpg",
+		]);
 	});
 });
 

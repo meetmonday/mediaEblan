@@ -46,6 +46,12 @@ export function extractPostId(url: URL): string | null {
 	return null;
 }
 
+/** Parses a reddit post URL into `{ id }`, or `null` for share links / other hosts. */
+export function parse(url: URL): { id: string } | null {
+	const id = extractPostId(url);
+	return id ? { id } : null;
+}
+
 function isSupportedUrl(url: URL): boolean {
 	if (url.hostname === "redd.it") return SHORTLINK_PATTERN.test(url.pathname);
 	if (!url.hostname.endsWith("reddit.com")) return false;
@@ -65,16 +71,16 @@ async function resolveShareId(url: URL): Promise<string | null> {
 		const location = response.headers.get("location");
 		if (!location) return null;
 		current = new URL(location, current);
-		const id = extractPostId(current);
-		if (id) return id;
+		const parsed = parse(current);
+		if (parsed) return parsed.id;
 	}
 	return null;
 }
 
 /** Resolves the post id, following /s/ share-link redirects when needed. */
 async function resolvePostId(url: URL): Promise<string | null> {
-	const direct = extractPostId(url);
-	if (direct) return direct;
+	const parsed = parse(url);
+	if (parsed) return parsed.id;
 	if (url.hostname.endsWith("reddit.com") && SHARE_PATTERN.test(url.pathname)) {
 		return resolveShareId(url);
 	}

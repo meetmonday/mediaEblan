@@ -40,6 +40,12 @@ export interface ReplyMediaContext {
 
 type Upload = Awaited<ReturnType<typeof MediaUpload.path>> | string;
 
+/**
+ * Converts a media input to a GramIO upload.
+ * Contract: a string containing a path separator (`/`) is a local file path
+ * (as produced by `downloadMediaSources`); anything else is a cached
+ * Telegram `file_id` passed through unchanged.
+ */
 async function toUpload(input: string): Promise<Upload> {
 	return input.includes("/") ? MediaUpload.path(input) : input;
 }
