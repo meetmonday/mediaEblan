@@ -15,29 +15,50 @@ Once installed, Claude Code, Cursor, and other agents auto-load GramIO knowledge
 
 ### AI assistant behavior
 
-Before writing or modifying any code that imports `gramio` or `@gramio/*`, or touches files under `src/handlers/`, `src/commands/`, `src/scenes/`, `src/plugins/`, `src/shared/` — **invoke the `gramio` skill via the Skill tool first**. Do not rely on training-data knowledge of the framework: APIs shift fast, and the skill is the single source of truth for current patterns.
+Before writing or modifying any code that imports `gramio` or `@gramio/*`, or touches files under `src/handlers/`, `src/media/`, `src/providers/`, `src/plugins/`, `src/shared/` — **invoke the `gramio` skill via the Skill tool first**. Do not rely on training-data knowledge of the framework: APIs shift fast, and the skill is the single source of truth for current patterns.
 
 ## Tech Stack
 
 - **Framework**: [GramIO](https://gramio.dev/)
 - **Linter**: Biome
 - **Plugins**: Auto answer callback query, Auto-retry, Views, Media-group, Media-cache
-- **Other tools**: Jobify
 
 ## Project Structure
 
 ```
 src/
-├── index.ts          # Entry point — starts the bot, graceful shutdown
-├── bot.ts            # Bot instance with plugin chain
-├── config.ts         # Typed environment variables (env-var)
+├── index.ts            # Entry point — starts the bot, graceful shutdown
+├── bot.ts              # Bot instance — shared composer + handler composers
+├── config.ts           # Typed environment variables (env-var)
 ├── plugins/
-│   └── index.ts      # Shared Composer — extend this in every handler for typing
-├── handlers/         # Command/event composers (each extends shared composer)
-├── shared/
-│   ├── keyboards/    # Reusable Keyboard / InlineKeyboard builders
-│   └── callback-data/ # CallbackData class definitions
-│   └── views/        # Re-renderable message components (defineView)
+│   └── index.ts        # Shared Composer (named, scoped) — extend in every handler
+├── handlers/           # Command/event composers (each extends the shared composer)
+│   ├── chat.ts         # hears(/https?:\/\/\S+/) → sendMedia via the pipeline
+│   ├── inline.ts       # inline results via resolveDirect / Trashbox article / cached
+│   └── start.ts        # /start, deep-link tokens (pendingLinks) → sendMedia
+├── providers/          # Media source adapters — one file per site
+│   ├── types.ts        # Provider, ProviderResult, DirectMediaResult, MediaItem/Metadata
+│   ├── errors.ts       # ProviderError / HttpError / NetworkError hierarchy
+│   ├── helpers.ts      # extensionOf, makeAuthor, epochToIso, kindFromPath, downloadMediaSources
+│   ├── http.ts         # fetchWithTimeout, fetchJson, downloadTo, fetchRedirect
+│   ├── registry.ts     # providers[], resolveProvider, findMediaUrl, supported sites
+│   ├── twitter|tiktok|pixiv|reddit.ts   # site adapters (on helpers)
+│   └── trashbox.ts     # thin Provider adapter over services/trashbox.ts
+├── media/              # Media delivery pipeline (domain-agnostic)
+│   ├── pipeline.ts     # processMedia: lock → cache → fetch+retry → compress → send
+│   ├── sender.ts       # senderFrom — adapts a GramIO context to MediaSender
+│   ├── caption.ts      # CaptionBuilder / captionFor / cachedCaption
+│   ├── cache.ts        # in-memory URL → file_id cache
+│   └── ffmpeg.ts       # muxAudio, compressVideo, fileSize
+├── services/           # Cross-cutting infrastructure
+│   ├── locks.ts        # Verrou locker (per-resource mutex)
+│   ├── proc.ts         # runBinary — spawn + stderr parsing (yt-dlp, ffmpeg)
+│   ├── trashbox.ts     # Trashbox domain: resolve/fetch/html-clean/comment message
+│   └── pending-links.ts # short-lived tokens for the inline fallback button
+└── shared/
+    ├── keyboards/      # Reusable Keyboard / InlineKeyboard builders
+    ├── callback-data/  # CallbackData class definitions
+    └── views/          # defineView (initViewsBuilder) — re-renderable components
 ```
 
 ## Key Commands
@@ -53,7 +74,12 @@ bun test:e2e     # Real-network e2e over links.txt (on-demand, see Testing)
 
 ## Testing
 
-- `bun test` — fast flow tests in `tests/flow.test.ts`: chat/inline/photo/video/multi/error flows through the real bot with a **mocked** provider. No network.
+- `bun test` — unit + flow tests with **mocked** network (no real requests):
+  - `tests/helpers.test.ts` — provider helpers (`extensionOf`, `downloadMediaSources`, cleanup-on-error, …)
+  - `tests/{twitter,tiktok,pixiv,reddit}.test.ts` — provider `resolveDirect`/`fetch` against mocked APIs
+  - `tests/trashbox-unit.test.ts` — Trashbox pure functions (`htmlCleaner`, `commentMediaSources`, `firstImgSrc`, `commentMessage`)
+  - `tests/http.test.ts` — `fetchWithTimeout` transport behavior (timeout, socket close)
+  - `tests/flow.test.ts` — full bot flow via `TelegramTestEnvironment` with a fake provider (chat/inline/photo/video/multi/text/error/retry)
 - `bun test:e2e` — real e2e (`tests/e2e/links.e2e.ts`): for each link in `tests/links.txt` runs the full flow (link → provider → download → caption → sendPhoto/sendVideo). Groups are derived dynamically from `resolveProvider`, so a new provider needs **only** a link in `links.txt` — no new files or scripts.
 - Run e2e **only** when a provider module or bot-wide media handling changes, and filter a single provider with `-t`: `bun test ./tests/e2e/links.e2e.ts -t pixiv` (or `-t twitter`). `.e2e.ts` is never picked up by plain `bun test`.
 - e2e is real-network and may require `PIXIV_COOKIE` in `.env` for restricted Pixiv works.
@@ -87,6 +113,18 @@ bun test:e2e     # Real-network e2e over links.txt (on-demand, see Testing)
 
 - **No `any` anywhere** — no `ctx: any`, `as any`, `<any>`, or implicit-any handler params. Derive types from `ContextType<typeof bot, "update_name">` or the exported `BotType`. If a value is genuinely unknown at a system boundary, use `unknown` + narrowing.
 
+### Providers
+
+- **Error hierarchy** (`providers/errors.ts`) is load-bearing — the pipeline's retry policy depends on it:
+  - `ProviderError(provider, message)` — *semantic*: bad link, no media, unsupported content. The message is shown to the user **as-is** and is **never retried**. Throw it with a user-facing Russian message.
+  - `HttpError` — any HTTP-layer failure (non-2xx, bad body); **retryable**.
+  - `NetworkError extends HttpError` — transient transport failure (timeout, connection reset); **retryable**. Use it for wrapped transport errors, or let the http helpers raise it for you.
+  - The pipeline retries `HttpError`/`NetworkError` once, then rethrows; `ProviderError` surfaces immediately. Never `throw new Error(...)` from a provider — the message would leak as a generic failure.
+- **Use the shared helpers** (`providers/helpers.ts`): `extensionOf` (extension from a URL), `makeAuthor` (author object), `epochToIso` (unix → ISO — **always** normalize dates at the provider boundary), `kindFromPath`/forced `kind`, and `downloadMediaSources(sources, dir, { sequential, headers, kind })` which cleans up partial downloads on failure. Pixiv must pass `sequential: true` — i.pximg.net throttles parallel connections.
+- **Parse once**: each provider exports `parse(url): { id } | null` and reuses it in `match`, `fetch`, and `resolveDirect` instead of re-extracting the id.
+- **Network calls** go through `providers/http.ts` (`fetchJson`, `fetchWithTimeout`, `downloadTo`, `fetchRedirect`) — they already wrap failures as `HttpError`/`NetworkError`.
+- **Text-only results** (e.g. a comment without images) are returned as `ProviderResult.text: { content, disableLinkPreview }` with `items: []` — the pipeline sends them via `sendText`, they are not errors.
+
 ## Architecture
 
 ### Plugin composition
@@ -115,6 +153,34 @@ export const myComposer = new Composer()
 1. Create `src/handlers/my-feature.ts` extending the shared composer
 2. Import and chain it via `.extend(myComposer)` in `src/bot.ts`
 
+### Media pipeline
+
+`src/media/pipeline.ts` exposes `processMedia(url, sender, includeSourceLink)` — the single path that turns a link into media, shared by chat (`handlers/chat.ts`) and deep-links (`handlers/start.ts`). Flow per URL:
+
+1. **Lock** — Verrou per-URL mutex, so concurrent identical links are processed once.
+2. **Cache hit** — in-memory `mediaCache` (URL → `file_id`) sends the stored `file_id` with `cachedCaption`, no re-download.
+3. **Fetch** — `resolveProvider(url)`; a missing provider is a `MediaError("unsupported", …)` listing the supported sites.
+4. **Retry** — `fetchProviderResult` retries once on `HttpError`/`NetworkError`, never on `ProviderError` (see Conventions).
+5. **Text branch** — `result.items` empty with `result.text` → `sender.sendText(content, { disableLinkPreview })`; cached nothing.
+6. **Send** — videos above `MAX_FILE_SIZE_MB` are compressed via ffmpeg; single item → `sendPhoto`/`sendVideo`, several → `sendMediaGroup` (caption on the first item); the `file_id` is cached.
+
+`MediaSender` is a minimal interface (defined in `pipeline.ts`) so tests can inject a fake; `senderFrom(context)` in `media/sender.ts` adapts a GramIO context. Captions are built by `CaptionBuilder`/`captionFor` in `media/caption.ts`.
+
+### Providers
+
+`src/providers/` adapts each site to the uniform `Provider` interface (`types.ts`). Chat mode uses `fetch(url, downloadDir)` which downloads media; inline mode uses the optional `resolveDirect(url)` which returns publicly-embeddable URLs without downloading. Trashbox is a provider too: `providers/trashbox.ts` is a thin adapter over the domain logic in `services/trashbox.ts` (resolve, HTML cleaning, comment message).
+
+**Adding a new provider** — the whole point of the refactor, no copy-paste:
+
+1. Create `src/providers/<name>.ts`:
+   - `match(url)` — decides whether the URL belongs to this provider (usually via an exported `parse`)
+   - `fetch(url, downloadDir)` — returns `ProviderResult`; download via `downloadMediaSources`
+   - `resolveDirect?(url)` — only when there are public URLs for inline mode
+   - errors: `throw new ProviderError("<name>", "текст")` for semantic problems, or let the http helpers raise `HttpError`/`NetworkError`
+2. Add the provider to the `providers` array in `registry.ts`.
+3. Add a sample link to `tests/links.txt` — the e2e group is created automatically from `resolveProvider`.
+4. Document any new env vars inline in `config.ts`.
+
 ### Views
 
 `src/shared/views/` contains reusable message components built with `@gramio/views`.
@@ -136,11 +202,11 @@ Use it in handlers: `await context.render(myView, param)`.
 
 ### Locks (Verrou)
 
-`src/services/locks.ts` exports a `locker` instance.
+`src/services/locks.ts` exports a `verrou` instance.
 Use it to prevent concurrent processing of the same resource:
 
 ```ts
-await locker.createLock("user-42").run(async () => {
+await verrou.createLock("user-42", "5 minutes").run(async () => {
     // only one execution at a time per key
 });
 ```
@@ -171,6 +237,8 @@ When making changes, update the relevant section above:
 |--------|-------------------|
 | New plugin installed | Tech Stack, Architecture |
 | New handler added | Project Structure |
+| New provider added | Project Structure, Conventions (Providers), Architecture (Providers) |
 | New service / external client | Project Structure |
 | New env variable | document it in config.ts inline |
+| Pipeline / media behavior changed | Architecture (Media pipeline) |
 | Script added to package.json | Key Commands |
