@@ -1,4 +1,6 @@
-export class HttpError extends Error {}
+import { HttpError, NetworkError } from "./errors.ts";
+
+export { HttpError } from "./errors.ts";
 
 const DEFAULT_TIMEOUT = 15_000;
 
@@ -21,9 +23,9 @@ async function withTimeout<T>(
 	} catch (error) {
 		if (error instanceof HttpError) throw error;
 		if (isAbort(error)) {
-			throw new HttpError(`Таймаут запроса к ${new URL(url).hostname}`);
+			throw new NetworkError(`Таймаут запроса к ${new URL(url).hostname}`);
 		}
-		throw new HttpError(`Не удалось связаться с ${new URL(url).hostname}`);
+		throw new NetworkError(`Не удалось связаться с ${new URL(url).hostname}`);
 	} finally {
 		clearTimeout(timer);
 	}
@@ -44,6 +46,25 @@ export function fetchWithTimeout(
 		}
 		return response;
 	});
+}
+
+/**
+ * Fetches with `redirect: "manual"` — the raw 3xx response is returned so the
+ * caller can follow redirects itself (e.g. share-link resolution).
+ * Returns `null` on any error or timeout.
+ */
+export async function fetchRedirect(
+	url: string,
+	init?: RequestInit,
+	timeoutMs = DEFAULT_TIMEOUT,
+): Promise<Response | null> {
+	try {
+		return await withTimeout(url, timeoutMs, (signal) =>
+			fetch(url, { ...init, redirect: "manual", signal }),
+		);
+	} catch {
+		return null;
+	}
 }
 
 /** Fetches JSON with a full-body timeout, throwing HttpError on non-2xx or non-JSON. */

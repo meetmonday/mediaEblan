@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { Composer, MediaInput, MediaUpload } from "gramio";
 import { config } from "../config.ts";
 import { composer } from "../plugins/index.ts";
+import { ProviderError } from "../providers/errors.ts";
 import { downloadTo, HttpError } from "../providers/http.ts";
 import {
 	buildCommentMessage,
@@ -11,7 +12,6 @@ import {
 	findCommentUrl,
 	firstImgSrc,
 	resolveCommentUrl,
-	TrashboxError,
 } from "../services/trashbox.ts";
 
 type Upload = Awaited<ReturnType<typeof MediaUpload.path>> | string;
@@ -89,7 +89,7 @@ export const trashboxComposer = new Composer()
 			}
 		} catch (error) {
 			const message =
-				error instanceof TrashboxError || error instanceof HttpError
+				error instanceof ProviderError || error instanceof HttpError
 					? error.message
 					: "Не удалось получить комментарий";
 			await context.reply(`❌ ${message}`).catch(() => {});

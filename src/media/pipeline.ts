@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import type { FormattableString } from "gramio";
 import { config } from "../config.ts";
+import { ProviderError } from "../providers/errors.ts";
 import { HttpError } from "../providers/http.ts";
 import { resolveProvider, supportedSitesText } from "../providers/registry.ts";
 import type {
@@ -72,7 +73,20 @@ async function cleanup(items: MediaItem[]): Promise<void> {
 	);
 }
 
+/**
+ * Rethrows any known error from the hierarchy as-is (its message surfaces to
+ * the user); wraps unexpected values — non-`Error` or errors from outside the
+ * hierarchy — into a download `MediaError`.
+ */
 function toDownloadError(error: unknown): MediaError {
+	if (
+		error instanceof HttpError ||
+		error instanceof ProviderError ||
+		error instanceof MediaError ||
+		error instanceof CompressionError
+	) {
+		throw error;
+	}
 	return new MediaError(
 		"download",
 		error instanceof Error ? error.message : "Не удалось скачать медиа",
@@ -81,23 +95,28 @@ function toDownloadError(error: unknown): MediaError {
 
 /**
  * Fetches from the provider with a single retry for transient network
- * failures (`HttpError`). Semantic provider errors surface immediately.
+ * failures (`HttpError`, which covers `NetworkError`). Semantic provider
+ * errors (`ProviderError`) surface immediately, without retry.
  */
 async function fetchProviderResult(
 	provider: Provider,
 	url: URL,
 	downloadDir: string,
 ): Promise<ProviderResult> {
+	const attempt = (): Promise<ProviderResult> =>
+		provider.fetch(url, downloadDir);
 	try {
-		return await provider.fetch(url, downloadDir);
+		return await attempt();
 	} catch (error) {
-		if (!(error instanceof HttpError)) throw toDownloadError(error);
-		await Bun.sleep(1_000);
-		try {
-			return await provider.fetch(url, downloadDir);
-		} catch (error2) {
-			throw toDownloadError(error2);
+		if (error instanceof HttpError) {
+			await Bun.sleep(1_000);
+			try {
+				return await attempt();
+			} catch (retryError) {
+				throw toDownloadError(retryError);
+			}
 		}
+		throw toDownloadError(error);
 	}
 }
 

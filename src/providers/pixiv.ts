@@ -1,17 +1,14 @@
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
 import { config } from "../config.ts";
-import { downloadTo, fetchJson } from "./http.ts";
+import { ProviderError } from "./errors.ts";
+import { downloadMediaSources, makeAuthor } from "./helpers.ts";
+import { fetchJson } from "./http.ts";
 import type {
 	DirectMediaItem,
 	DirectMediaResult,
-	MediaItem,
 	MediaMetadata,
 	Provider,
 	ProviderResult,
 } from "./types.ts";
-
-export class PixivError extends Error {}
 
 const PIXIV_ORIGIN = "https://www.pixiv.net";
 
@@ -61,17 +58,13 @@ async function fetchAjax<T>(url: string): Promise<T> {
 		body: T | null;
 	}>(url, { headers: IMG_HEADERS });
 	if (body.error || body.body === null) {
-		throw new PixivError(
+		throw new ProviderError(
+			"pixiv",
 			body.message ||
 				"Иллюстрация недоступна (возможно R-18 — нужен PIXIV_COOKIE)",
 		);
 	}
 	return body.body;
-}
-
-function extensionOf(url: string): string {
-	const ext = url.split(".").at(-1)?.toLowerCase();
-	return ext && /^[a-z0-9]+$/.test(ext) ? `.${ext}` : ".jpg";
 }
 
 /** Fetches illust metadata + page URLs. Shared by chat downloads and inline mode. */
@@ -82,7 +75,8 @@ async function fetchIllust(
 		`${PIXIV_ORIGIN}/ajax/illust/${id}`,
 	);
 	if (illust.illustType === 2) {
-		throw new PixivError(
+		throw new ProviderError(
+			"pixiv",
 			"Анимированные иллюстрации (ugoira) пока не поддерживаются",
 		);
 	}
@@ -90,7 +84,8 @@ async function fetchIllust(
 	const pages = await fetchAjax<PageBody[]>(
 		`${PIXIV_ORIGIN}/ajax/illust/${id}/pages`,
 	);
-	if (pages.length === 0) throw new PixivError("В иллюстрации нет изображений");
+	if (pages.length === 0)
+		throw new ProviderError("pixiv", "В иллюстрации нет изображений");
 
 	return { illust, pages };
 }
@@ -98,16 +93,13 @@ async function fetchIllust(
 function metadataOf(illust: IllustBody): MediaMetadata {
 	return {
 		title: illust.illustTitle,
-		author:
-			illust.userName && illust.userId
-				? {
-						displayName: illust.userName,
-						handle: illust.userId,
-						profileUrl: `https://www.pixiv.net/user/${illust.userId}`,
-					}
-				: illust.userName
-					? { displayName: illust.userName }
-					: undefined,
+		author: makeAuthor({
+			displayName: illust.userName,
+			handle: illust.userId,
+			profileUrl: illust.userId
+				? `https://www.pixiv.net/user/${illust.userId}`
+				: undefined,
+		}),
 		date: illust.createDate,
 		views: illust.viewCount,
 		likes: illust.likeCount,
@@ -127,15 +119,20 @@ export function proxyImageUrl(src: string): string {
 
 async function resolveDirectPixiv(url: URL): Promise<DirectMediaResult> {
 	const id = extractIllustId(url);
-	if (!id) throw new PixivError("Не удалось распознать ссылку Pixiv");
+	if (!id)
+		throw new ProviderError("pixiv", "Не удалось распознать ссылку Pixiv");
 	if (!config.PIXIV_INLINE_PROXY) {
-		throw new PixivError("Pixiv инлайн-режим отключён");
+		throw new ProviderError("pixiv", "Pixiv инлайн-режим отключён");
 	}
 
 	const { illust, pages } = await fetchIllust(id);
 	const items: DirectMediaItem[] = pages.map((page) => {
 		const src = config.PIXIV_COOKIE ? page.urls.original : page.urls.regular;
-		if (!src) throw new PixivError("Не удалось получить ссылку на изображение");
+		if (!src)
+			throw new ProviderError(
+				"pixiv",
+				"Не удалось получить ссылку на изображение",
+			);
 		return { kind: "photo" as const, url: proxyImageUrl(src) };
 	});
 
@@ -148,30 +145,27 @@ export const pixivProvider: Provider = {
 	match: (url) => extractIllustId(url) !== null,
 	async fetch(url, downloadDir): Promise<ProviderResult> {
 		const id = extractIllustId(url);
-		if (!id) throw new PixivError("Не удалось распознать ссылку Pixiv");
+		if (!id)
+			throw new ProviderError("pixiv", "Не удалось распознать ссылку Pixiv");
 
 		const { illust, pages } = await fetchIllust(id);
 
-		// Sequential — i.pximg.net throttles parallel connections from one IP
-		const items: MediaItem[] = [];
-		try {
-			for (const [index, page] of pages.entries()) {
+		// Sequential — i.pximg.net throttles parallel connections from one IP.
+		const items = await downloadMediaSources(
+			pages.map((page, index) => {
 				const src = config.PIXIV_COOKIE
 					? page.urls.original
 					: page.urls.regular;
 				if (!src)
-					throw new PixivError("Не удалось получить ссылку на изображение");
-
-				const outPath = join(downloadDir, `${id}_${index}${extensionOf(src)}`);
-				await downloadTo(src, outPath, { headers: IMG_HEADERS });
-				items.push({ kind: "photo", path: outPath });
-			}
-		} catch (error) {
-			await Promise.all(
-				items.map((item) => rm(item.path, { force: true }).catch(() => {})),
-			);
-			throw error;
-		}
+					throw new ProviderError(
+						"pixiv",
+						"Не удалось получить ссылку на изображение",
+					);
+				return { url: src, name: `${id}_${index}` };
+			}),
+			downloadDir,
+			{ headers: IMG_HEADERS, sequential: true },
+		);
 
 		return {
 			metadata: metadataOf(illust),

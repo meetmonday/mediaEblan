@@ -1,4 +1,6 @@
 import { MediaInput, MediaUpload } from "gramio";
+import { ProviderError } from "../providers/errors.ts";
+import { HttpError } from "../providers/http.ts";
 import type { MediaGroupInput, MediaSender } from "./pipeline.ts";
 import { MediaError, processMedia } from "./pipeline.ts";
 
@@ -100,7 +102,9 @@ export async function sendMedia(
 		);
 	} catch (error) {
 		const text = `❌ ${
-			error instanceof MediaError
+			error instanceof MediaError ||
+			error instanceof ProviderError ||
+			error instanceof HttpError
 				? error.message
 				: "Не удалось обработать ссылку"
 		}`;

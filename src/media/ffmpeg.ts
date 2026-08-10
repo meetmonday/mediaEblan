@@ -1,5 +1,5 @@
 import { stat } from "node:fs/promises";
-import type { Subprocess } from "bun";
+import { ProcError, runBinary } from "../services/proc.ts";
 
 export class CompressionError extends Error {}
 
@@ -12,11 +12,10 @@ export async function fileSize(path: string): Promise<number> {
 }
 
 async function ffprobeDuration(path: string): Promise<number | null> {
-	let proc: Subprocess<"pipe", "pipe", "pipe">;
 	try {
-		proc = Bun.spawn(
+		const { stdout } = await runBinary(
+			"ffprobe",
 			[
-				"ffprobe",
 				"-v",
 				"error",
 				"-show_entries",
@@ -25,30 +24,29 @@ async function ffprobeDuration(path: string): Promise<number | null> {
 				"csv=p=0",
 				path,
 			],
-			{ stdout: "pipe", stderr: "pipe" },
+			"ffmpeg не установлен — не могу сжать видео",
 		);
-	} catch {
-		throw new CompressionError("ffmpeg не установлен — не могу сжать видео");
+		const value = Number(stdout.trim());
+		return Number.isFinite(value) && value > 0 ? value : null;
+	} catch (error) {
+		if (error instanceof ProcError) {
+			if (error.exitCode === null) throw new CompressionError(error.message);
+			return null;
+		}
+		throw error;
 	}
-	const exitCode = await proc.exited;
-	if (exitCode !== 0) return null;
-	const value = Number((await new Response(proc.stdout).text()).trim());
-	return Number.isFinite(value) && value > 0 ? value : null;
 }
 
 async function runFfmpeg(args: string[]): Promise<void> {
-	let proc: Subprocess<"pipe", "pipe", "pipe">;
 	try {
-		proc = Bun.spawn(["ffmpeg", ...args], { stdout: "pipe", stderr: "pipe" });
-	} catch {
-		throw new CompressionError("ffmpeg не установлен — не могу сжать видео");
-	}
-	const exitCode = await proc.exited;
-	if (exitCode !== 0) {
-		const stderr = await new Response(proc.stderr).text();
-		throw new CompressionError(
-			stderr.trim().split("\n").at(-1) ?? "ffmpeg failed",
+		await runBinary(
+			"ffmpeg",
+			args,
+			"ffmpeg не установлен — не могу сжать видео",
 		);
+	} catch (error) {
+		if (!(error instanceof ProcError)) throw error;
+		throw new CompressionError(error.message);
 	}
 }
 

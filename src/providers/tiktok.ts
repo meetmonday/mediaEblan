@@ -1,17 +1,15 @@
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
-import { downloadTo, fetchJson } from "./http.ts";
+import { ProviderError } from "./errors.ts";
+import type { MediaSource } from "./helpers.ts";
+import { downloadMediaSources, epochToIso, makeAuthor } from "./helpers.ts";
+import { fetchJson } from "./http.ts";
 import type {
 	CaptionOptions,
 	DirectMediaItem,
 	DirectMediaResult,
-	MediaItem,
 	MediaMetadata,
 	Provider,
 	ProviderResult,
 } from "./types.ts";
-
-export class TikTokError extends Error {}
 
 // Third-party scraper API — resolves TikTok links without cookies or headers.
 const TIKWM_API = "https://www.tikwm.com/api/";
@@ -59,18 +57,14 @@ interface TikTokApiResponse {
 function metadataOf(data: TikTokMediaData): MediaMetadata {
 	return {
 		title: data.title,
-		author: data.author?.nickname
-			? {
-					displayName: data.author.nickname,
-					handle: data.author.unique_id,
-					profileUrl: data.author.unique_id
-						? `https://www.tiktok.com/@${data.author.unique_id}`
-						: undefined,
-				}
-			: undefined,
-		date: data.create_time
-			? new Date(data.create_time * 1000).toISOString()
-			: undefined,
+		author: makeAuthor({
+			displayName: data.author?.nickname,
+			handle: data.author?.unique_id,
+			profileUrl: data.author?.unique_id
+				? `https://www.tiktok.com/@${data.author.unique_id}`
+				: undefined,
+		}),
+		date: data.create_time ? epochToIso(data.create_time) : undefined,
 		likes: data.digg_count,
 		views: data.play_count,
 		bookmarks: data.collect_count,
@@ -86,17 +80,12 @@ async function fetchTikTokData(url: URL): Promise<TikTokMediaData> {
 		body: JSON.stringify({ url: url.toString(), hd: 1 }),
 	});
 	if (!body.data) {
-		throw new TikTokError(
+		throw new ProviderError(
+			"tiktok",
 			body.msg || "Видео не найдено или ссылка некорректная",
 		);
 	}
 	return body.data;
-}
-
-function extensionOf(src: string): string {
-	const pathname = new URL(src).pathname;
-	const ext = pathname.split(".").at(-1)?.toLowerCase();
-	return ext && /^[a-z0-9]+$/.test(ext) ? `.${ext}` : ".jpg";
 }
 
 async function fetchTikTok(
@@ -106,29 +95,22 @@ async function fetchTikTok(
 	const data = await fetchTikTokData(url);
 	const metadata = metadataOf(data);
 
-	const items: MediaItem[] = [];
-	try {
-		if (data.images && data.images.length > 0) {
-			for (const [index, src] of data.images.entries()) {
-				const outPath = join(
-					downloadDir,
-					`${data.id ?? "tiktok"}_${index}${extensionOf(src)}`,
-				);
-				await downloadTo(src, outPath, { headers: MEDIA_HEADERS });
-				items.push({ kind: "photo", path: outPath });
-			}
-		} else {
-			if (!data.play) throw new TikTokError("В видео не найдено медиа");
-			const outPath = join(downloadDir, `${data.id ?? "tiktok"}.mp4`);
-			await downloadTo(data.play, outPath, { headers: MEDIA_HEADERS });
-			items.push({ kind: "video", path: outPath });
-		}
-	} catch (error) {
-		await Promise.all(
-			items.map((item) => rm(item.path, { force: true }).catch(() => {})),
-		);
-		throw error;
+	const sources: MediaSource[] =
+		data.images && data.images.length > 0
+			? data.images.map((src, index) => ({
+					url: src,
+					name: `${data.id ?? "tiktok"}_${index}`,
+				}))
+			: [];
+	if (sources.length === 0) {
+		if (!data.play)
+			throw new ProviderError("tiktok", "В видео не найдено медиа");
+		sources.push({ url: data.play, name: data.id ?? "tiktok", kind: "video" });
 	}
+
+	const items = await downloadMediaSources(sources, downloadDir, {
+		headers: MEDIA_HEADERS,
+	});
 
 	return { metadata, items, caption: TIKTOK_CAPTION };
 }
@@ -145,7 +127,8 @@ async function resolveDirectTikTok(url: URL): Promise<DirectMediaResult> {
 	} else if (data.play && data.cover) {
 		items.push({ kind: "video", url: data.play, thumbnailUrl: data.cover });
 	}
-	if (items.length === 0) throw new TikTokError("В видео не найдено медиа");
+	if (items.length === 0)
+		throw new ProviderError("tiktok", "В видео не найдено медиа");
 
 	return { metadata, items, caption: TIKTOK_CAPTION };
 }

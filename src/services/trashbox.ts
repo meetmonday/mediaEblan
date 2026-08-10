@@ -2,10 +2,9 @@ import { markdownToFormattable } from "@gramio/format/markdown";
 import { format } from "gramio";
 import { NodeHtmlMarkdown } from "node-html-markdown";
 import { captionFor } from "../media/caption.ts";
+import { ProviderError } from "../providers/errors.ts";
 import { fetchJson, fetchWithTimeout } from "../providers/http.ts";
 import type { MediaMetadata } from "../providers/types.ts";
-
-export class TrashboxError extends Error {}
 
 const ACCEPTED_DOMAINS = new Set(["trashbox.ru", "redspecial.ru"]);
 
@@ -53,12 +52,12 @@ export function findCommentUrl(text: string): URL | null {
 export async function resolveCommentUrl(url: URL): Promise<CommentUrl> {
 	const host = url.host;
 	if (!ACCEPTED_DOMAINS.has(host))
-		throw new TrashboxError("Некорректная ссылка");
+		throw new ProviderError("trashbox", "Некорректная ссылка");
 
 	const pathParts = url.pathname.split("/").filter(Boolean);
 	const commentId = parseInt(url.hash.split("_")[2] ?? "0", 10);
 	if (pathParts.length < 2 || Number.isNaN(commentId) || commentId === 0)
-		throw new TrashboxError("Некорректная ссылка");
+		throw new ProviderError("trashbox", "Некорректная ссылка");
 
 	let topicId = 0;
 	const topic = pathParts[1];
@@ -66,14 +65,17 @@ export async function resolveCommentUrl(url: URL): Promise<CommentUrl> {
 		topicId = parseInt(topic ?? "0", 10);
 	} else if (pathParts[0] === "link") {
 		if (!topic || !/^[a-zA-Z0-9_-]+$/.test(topic))
-			throw new TrashboxError("Некорректная ссылка");
+			throw new ProviderError("trashbox", "Некорректная ссылка");
 		topicId = await resolveLinkTopicId(host, topic);
 	} else {
-		throw new TrashboxError("Некорректная ссылка");
+		throw new ProviderError("trashbox", "Некорректная ссылка");
 	}
 
 	if (topicId === 0)
-		throw new TrashboxError("Некорректная ссылка или топик не найден");
+		throw new ProviderError(
+			"trashbox",
+			"Некорректная ссылка или топик не найден",
+		);
 
 	return { topicId, commentId, host };
 }

@@ -2,7 +2,14 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { config } from "../config.ts";
 import { muxAudio } from "../media/ffmpeg.ts";
-import { downloadTo, fetchJson, fetchWithTimeout } from "./http.ts";
+import { ProviderError } from "./errors.ts";
+import { downloadMediaSources, epochToIso, makeAuthor } from "./helpers.ts";
+import {
+	downloadTo,
+	fetchJson,
+	fetchRedirect,
+	fetchWithTimeout,
+} from "./http.ts";
 import type {
 	DirectMediaItem,
 	DirectMediaResult,
@@ -11,8 +18,6 @@ import type {
 	Provider,
 	ProviderResult,
 } from "./types.ts";
-
-export class RedditError extends Error {}
 
 const REDDIT_ORIGIN = "https://www.reddit.com";
 // Pushshift-style mirror — Reddit blocks most datacenter IPs, this one doesn't.
@@ -53,7 +58,9 @@ function isSupportedUrl(url: URL): boolean {
 async function resolveShareId(url: URL): Promise<string | null> {
 	let current = url;
 	for (let i = 0; i < 5; i++) {
-		const response = await fetchRedirect(current.toString());
+		const response = await fetchRedirect(current.toString(), {
+			headers: JSON_HEADERS,
+		});
 		if (!response) return null;
 		const location = response.headers.get("location");
 		if (!location) return null;
@@ -62,22 +69,6 @@ async function resolveShareId(url: URL): Promise<string | null> {
 		if (id) return id;
 	}
 	return null;
-}
-
-async function fetchRedirect(url: string): Promise<Response | null> {
-	const controller = new AbortController();
-	const timer = setTimeout(() => controller.abort(), 10_000);
-	try {
-		return await fetch(url, {
-			headers: JSON_HEADERS,
-			redirect: "manual",
-			signal: controller.signal,
-		});
-	} catch {
-		return null;
-	} finally {
-		clearTimeout(timer);
-	}
 }
 
 /** Resolves the post id, following /s/ share-link redirects when needed. */
@@ -163,25 +154,26 @@ async function fetchPostData(id: string): Promise<RedditPost> {
 	if (viaReddit) return viaReddit;
 	const viaMirror = await fetchViaArcticShift(id);
 	if (viaMirror) return viaMirror;
-	throw new RedditError("Не удалось получить пост — Reddit недоступен");
+	throw new ProviderError(
+		"reddit",
+		"Не удалось получить пост — Reddit недоступен",
+	);
 }
 
 function metadataOf(post: RedditPost): MediaMetadata {
 	return {
 		title: post.title,
-		author: post.author
-			? {
-					displayName: post.author,
-					handle: `u/${post.author}`,
-					profileUrl: `https://www.reddit.com/user/${post.author}`,
-				}
-			: undefined,
+		author: makeAuthor({
+			displayName: post.author,
+			handle: post.author ? `u/${post.author}` : undefined,
+			profileUrl: post.author
+				? `https://www.reddit.com/user/${post.author}`
+				: undefined,
+		}),
 		place:
 			post.subreddit_name_prefixed ??
 			(post.subreddit ? `r/${post.subreddit}` : undefined),
-		date: post.created_utc
-			? new Date(post.created_utc * 1000).toISOString()
-			: undefined,
+		date: post.created_utc ? epochToIso(post.created_utc) : undefined,
 		likes: post.score,
 		replies: post.num_comments,
 	};
@@ -296,7 +288,7 @@ async function downloadVideo(
 ): Promise<MediaItem> {
 	const video = redditVideo(post);
 	if (!video?.fallback_url)
-		throw new RedditError("Не удалось получить ссылку на видео");
+		throw new ProviderError("reddit", "Не удалось получить ссылку на видео");
 
 	const videoPath = join(downloadDir, `${id}_video.mp4`);
 	await downloadTo(stripQuery(video.fallback_url), videoPath);
@@ -325,18 +317,13 @@ async function downloadVideo(
 	}
 }
 
-function extensionOf(src: string): string {
-	const pathname = new URL(src).pathname;
-	const ext = pathname.split(".").at(-1)?.toLowerCase();
-	return ext && /^[a-z0-9]+$/.test(ext) ? `.${ext}` : ".jpg";
-}
-
 async function fetchReddit(
 	url: URL,
 	downloadDir: string,
 ): Promise<ProviderResult> {
 	const id = await resolvePostId(url);
-	if (!id) throw new RedditError("Не удалось распознать ссылку на Reddit");
+	if (!id)
+		throw new ProviderError("reddit", "Не удалось распознать ссылку на Reddit");
 
 	const post = await fetchPostData(id);
 	const metadata = metadataOf(post);
@@ -347,28 +334,21 @@ async function fetchReddit(
 	}
 
 	const sources = imageSources(post);
-	if (sources.length === 0) throw new RedditError("В посте не найдено медиа");
+	if (sources.length === 0)
+		throw new ProviderError("reddit", "В посте не найдено медиа");
 
-	const items: MediaItem[] = [];
-	try {
-		for (const [index, src] of sources.entries()) {
-			const outPath = join(downloadDir, `${id}_${index}${extensionOf(src)}`);
-			await downloadTo(src, outPath);
-			items.push({ kind: "photo", path: outPath });
-		}
-	} catch (error) {
-		await Promise.all(
-			items.map((item) => rm(item.path, { force: true }).catch(() => {})),
-		);
-		throw error;
-	}
+	const items = await downloadMediaSources(
+		sources.map((src, index) => ({ url: src, name: `${id}_${index}` })),
+		downloadDir,
+	);
 
 	return { metadata, items };
 }
 
 async function resolveDirectReddit(url: URL): Promise<DirectMediaResult> {
 	const id = await resolvePostId(url);
-	if (!id) throw new RedditError("Не удалось распознать ссылку на Reddit");
+	if (!id)
+		throw new ProviderError("reddit", "Не удалось распознать ссылку на Reddit");
 
 	const post = await fetchPostData(id);
 	const metadata = metadataOf(post);

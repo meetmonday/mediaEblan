@@ -1,16 +1,14 @@
-import { rm } from "node:fs/promises";
 import { join } from "node:path";
-import type { Subprocess } from "bun";
-import { downloadTo, fetchJson } from "./http.ts";
+import { ProcError, runBinary } from "../services/proc.ts";
+import { ProviderError } from "./errors.ts";
+import { downloadMediaSources, kindFromPath, makeAuthor } from "./helpers.ts";
+import { fetchJson } from "./http.ts";
 import type {
 	DirectMediaItem,
 	DirectMediaResult,
-	MediaItem,
 	Provider,
 	ProviderResult,
 } from "./types.ts";
-
-export class TwitterError extends Error {}
 
 const TWEET_ID_PATTERN = /\/status\/(\d+)/;
 
@@ -52,13 +50,13 @@ function truncate(text: string, max = 220): string {
 function metadataOf(tweet: FxTweet): ProviderResult["metadata"] {
 	return {
 		title: tweet.text ? truncate(tweet.text) : undefined,
-		author: tweet.author
-			? {
-					displayName: tweet.author.name,
-					handle: tweet.author.screen_name,
-					profileUrl: `https://x.com/${tweet.author.screen_name}`,
-				}
-			: undefined,
+		author: makeAuthor({
+			displayName: tweet.author?.name,
+			handle: tweet.author?.screen_name,
+			profileUrl: tweet.author
+				? `https://x.com/${tweet.author.screen_name}`
+				: undefined,
+		}),
 		date: tweet.created_at,
 		likes: tweet.likes,
 		retweets: tweet.retweets,
@@ -92,30 +90,23 @@ async function fetchViaFx(
 	const videos = tweet.media?.videos ?? [];
 	if (photos.length === 0 && videos.length === 0) return null;
 
-	const items: MediaItem[] = [];
-	try {
-		for (const [index, photo] of photos.entries()) {
-			const outPath = join(downloadDir, `${id}_${index}.jpg`);
-			await downloadTo(photo.url, outPath);
-			items.push({ kind: "photo", path: outPath });
-		}
-		for (const [index, video] of videos.entries()) {
-			const outPath = join(downloadDir, `${id}_v${index}.mp4`);
-			await downloadTo(video.url, outPath);
-			items.push({ kind: "video", path: outPath });
-		}
-	} catch (error) {
-		await Promise.all(
-			items.map((item) => rm(item.path, { force: true }).catch(() => {})),
-		);
-		throw error;
-	}
+	const items = await downloadMediaSources(
+		[
+			...photos.map((photo, index) => ({
+				url: photo.url,
+				name: `${id}_${index}`,
+				kind: "photo" as const,
+			})),
+			...videos.map((video, index) => ({
+				url: video.url,
+				name: `${id}_v${index}`,
+				kind: "video" as const,
+			})),
+		],
+		downloadDir,
+	);
 
 	return { metadata: metadataOf(tweet), items };
-}
-
-function isVideoPath(path: string): boolean {
-	return /\.(mp4|webm|mov|mkv)$/i.test(path);
 }
 
 async function fetchViaYtDlp(
@@ -123,11 +114,11 @@ async function fetchViaYtDlp(
 	downloadDir: string,
 ): Promise<ProviderResult> {
 	const template = join(downloadDir, "%(id)s.%(ext)s");
-	let proc: Subprocess<"pipe", "pipe", "pipe">;
+	let stdout: string;
 	try {
-		proc = Bun.spawn(
+		({ stdout } = await runBinary(
+			"yt-dlp",
 			[
-				"yt-dlp",
 				"-f",
 				"bv*+ba/b",
 				"--no-playlist",
@@ -139,19 +130,13 @@ async function fetchViaYtDlp(
 				"after_move:filepath",
 				url.toString(),
 			],
-			{ stdout: "pipe", stderr: "pipe" },
-		);
-	} catch {
-		throw new TwitterError("yt-dlp не установлен — не могу скачать твит");
-	}
-
-	const exitCode = await proc.exited;
-	const stdout = await new Response(proc.stdout).text();
-	if (exitCode !== 0) {
-		const stderr = await new Response(proc.stderr).text();
-		const hint = stderr.trim().split("\n").at(-1);
-		throw new TwitterError(
-			hint ? `yt-dlp: ${hint}` : "yt-dlp не смог скачать твит",
+			"yt-dlp не установлен — не могу скачать твит",
+		));
+	} catch (error) {
+		if (!(error instanceof ProcError)) throw error;
+		throw new ProviderError(
+			"twitter",
+			error.exitCode === null ? error.message : `yt-dlp: ${error.message}`,
 		);
 	}
 
@@ -159,12 +144,13 @@ async function fetchViaYtDlp(
 		.split("\n")
 		.map((line) => line.trim())
 		.filter(Boolean);
-	if (paths.length === 0) throw new TwitterError("В твите не найдено медиа");
+	if (paths.length === 0)
+		throw new ProviderError("twitter", "В твите не найдено медиа");
 
 	return {
 		metadata: {},
 		items: paths.map((path) => ({
-			kind: isVideoPath(path) ? "video" : "photo",
+			kind: kindFromPath(path),
 			path,
 		})),
 	};
@@ -173,10 +159,11 @@ async function fetchViaYtDlp(
 /** Resolves directly-embeddable media URLs (for inline mode) via fxTwitter. */
 async function resolveDirectTweet(url: URL): Promise<DirectMediaResult> {
 	const id = extractTweetId(url);
-	if (!id) throw new TwitterError("Не удалось распознать ссылку на твит");
+	if (!id)
+		throw new ProviderError("twitter", "Не удалось распознать ссылку на твит");
 
 	const tweet = await fetchFxTweet(id);
-	if (!tweet) throw new TwitterError("Не удалось получить твит");
+	if (!tweet) throw new ProviderError("twitter", "Не удалось получить твит");
 
 	const photos = tweet.media?.photos ?? [];
 	const videos = tweet.media?.videos ?? [];
@@ -191,7 +178,8 @@ async function resolveDirectTweet(url: URL): Promise<DirectMediaResult> {
 				: [];
 		}),
 	];
-	if (items.length === 0) throw new TwitterError("В твите не найдено медиа");
+	if (items.length === 0)
+		throw new ProviderError("twitter", "В твите не найдено медиа");
 
 	return { metadata: metadataOf(tweet), items };
 }
@@ -202,7 +190,11 @@ export const twitterProvider: Provider = {
 	match: (url) => extractTweetId(url) !== null,
 	async fetch(url, downloadDir): Promise<ProviderResult> {
 		const id = extractTweetId(url);
-		if (!id) throw new TwitterError("Не удалось распознать ссылку на твит");
+		if (!id)
+			throw new ProviderError(
+				"twitter",
+				"Не удалось распознать ссылку на твит",
+			);
 
 		const fx = await fetchViaFx(id, downloadDir);
 		if (fx) return fx;
