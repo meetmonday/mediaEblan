@@ -272,6 +272,10 @@ describe("flow: inline", () => {
 			"https://video.twimg.com/media/clip.mp4",
 		);
 		// @ts-expect-error -- result is a discriminated union
+		expect(call?.params.results[0]?.title).toBe("Пост с медиа");
+		// @ts-expect-error -- result is a discriminated union
+		expect(call?.params.results[1]?.title).toBe("Пост с медиа");
+		// @ts-expect-error -- result is a discriminated union
 		expect(call?.params.results[1]?.thumbnail_url).toBe(
 			"https://pbs.twimg.com/media/photo.jpg",
 		);
@@ -285,6 +289,23 @@ describe("flow: inline", () => {
 		const call = env.lastApiCall("answerInlineQuery");
 		expect(call?.params.results).toHaveLength(0);
 		expect(call?.params.button?.text).toBe("Открыть бот и вставить ссылку");
+	});
+
+	test("fallback button token → /start processes the link in PM", async () => {
+		const { env, user } = makeEnv();
+
+		await user.sendInlineQuery("https://example.com/deep-link");
+
+		const call = env.lastApiCall("answerInlineQuery");
+		const token = call?.params.button?.start_parameter;
+		expect(token).toBeTruthy();
+
+		await user.sendCommand("start", token);
+
+		expect(env.lastApiCall("sendPhoto")).toBeDefined();
+		expect(env.lastApiCall("sendPhoto")?.params.caption).toContain(
+			"📌 Солнечный день",
+		);
 	});
 
 	test("cached media → cached photo result with file_id", async () => {

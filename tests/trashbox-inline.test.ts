@@ -64,13 +64,13 @@ describe("flow: inline trashbox comments", () => {
 		// @ts-expect-error -- result is a discriminated union
 		expect(call?.params.results[0]?.type).toBe("article");
 		// @ts-expect-error -- result is a discriminated union
-		expect(call?.params.results[0]?.input_message_content?.message_text).toContain(
-			"kekos",
-		);
+		expect(
+			call?.params.results[0]?.input_message_content?.message_text,
+		).toContain("kekos");
 		// @ts-expect-error -- result is a discriminated union
-		expect(call?.params.results[0]?.input_message_content?.message_text).toContain(
-			"https://trashbox.ru/files/2554043_184a9c/1000341956.webp.png",
-		);
+		expect(
+			call?.params.results[0]?.input_message_content?.message_text,
+		).toContain("https://trashbox.ru/files/2554043_184a9c/1000341956.webp.png");
 		expect(call?.params.button).toBeUndefined();
 	});
 

@@ -4,7 +4,8 @@ import { mediaCache } from "../media/cache.ts";
 import { buildCaption } from "../media/caption.ts";
 import { composer } from "../plugins/index.ts";
 import { findMediaUrl, resolveProvider } from "../providers/registry.ts";
-import type { DirectMediaResult } from "../providers/types.ts";
+import type { DirectMediaResult, MediaMetadata } from "../providers/types.ts";
+import { pendingLinks } from "../services/pending-links.ts";
 import type { TrashboxComment } from "../services/trashbox.ts";
 import {
 	buildCommentMessage,
@@ -15,10 +16,33 @@ import {
 
 const ANSWER_OPTIONS = { cache_time: 0, is_personal: true } as const;
 
-const OPEN_BOT_BUTTON = {
-	text: "Открыть бот и вставить ссылку",
-	start_parameter: "inline",
-};
+/**
+ * Fallback button for links inline mode can't serve directly. The URL is
+ * stored under a short token; pressing the button opens the bot PM and
+ * sends `/start <token>`, which the start handler exchanges for the URL.
+ */
+function openBotButton(sourceUrl: string) {
+	return {
+		text: "Открыть бот и вставить ссылку",
+		start_parameter: pendingLinks.set(sourceUrl),
+	};
+}
+
+const TITLE_MAX = 60;
+
+/** Short title for an inline result — the media title, the author, or a numbered fallback. */
+function resultTitle(
+	metadata: MediaMetadata,
+	fallback: string,
+	index: number,
+): string {
+	const source = metadata.title?.trim() || metadata.author?.displayName;
+	if (source)
+		return source.length > TITLE_MAX
+			? `${source.slice(0, TITLE_MAX - 1)}…`
+			: source;
+	return `${fallback} ${index + 1}`;
+}
 
 function toInlineResults(
 	{ metadata, items }: DirectMediaResult,
@@ -35,7 +59,7 @@ function toInlineResults(
 					item.thumbnailUrl ?? item.url,
 					{
 						caption,
-						title: `Фото ${index + 1}`,
+						title: resultTitle(metadata, "Фото", index),
 					},
 				),
 			);
@@ -43,7 +67,7 @@ function toInlineResults(
 			results.push(
 				InlineQueryResult.videoMp4(
 					String(index),
-					`Видео ${index + 1}`,
+					resultTitle(metadata, "Видео", index),
 					item.url,
 					item.thumbnailUrl,
 					{
@@ -94,7 +118,10 @@ export const inlineComposer = new Composer()
 			} catch {
 				// Resolution failed — offer the chat as a fallback.
 			}
-			return context.answer([], { ...ANSWER_OPTIONS, button: OPEN_BOT_BUTTON });
+			return context.answer([], {
+				...ANSWER_OPTIONS,
+				button: openBotButton(commentUrl.toString()),
+			});
 		}
 
 		const url = findMediaUrl(context.query);
@@ -129,5 +156,8 @@ export const inlineComposer = new Composer()
 			// Resolution failed — offer the chat as a fallback.
 		}
 
-		return context.answer([], { ...ANSWER_OPTIONS, button: OPEN_BOT_BUTTON });
+		return context.answer([], {
+			...ANSWER_OPTIONS,
+			button: openBotButton(url.toString()),
+		});
 	});

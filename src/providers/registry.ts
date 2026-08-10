@@ -1,10 +1,12 @@
 import { pixivProvider } from "./pixiv.ts";
 import { redditProvider } from "./reddit.ts";
+import { tiktokProvider } from "./tiktok.ts";
 import { twitterProvider } from "./twitter.ts";
 import type { Provider } from "./types.ts";
 
 export const providers: Provider[] = [
 	twitterProvider,
+	tiktokProvider,
 	pixivProvider,
 	redditProvider,
 ];

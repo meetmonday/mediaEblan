@@ -62,7 +62,7 @@ describe("trashbox comment message", () => {
 		comm_id: "1334063",
 		parent: "0",
 		content:
-			"<div class=\"center\"><img src=\"/files/1571085_593c29/frame_1.png_min.jpg\" data-trash-lightbox2=\"554;938;/files/1571085_593c29/frame_1.png;-max1.jpg 472 800,-thumb.jpg 53 90,-orig.jpg 554 938,_minx2.jpg 472 800,_min.jpg 236 400\" width=\"236\" height=\"400\"/> </div>",
+			'<div class="center"><img src="/files/1571085_593c29/frame_1.png_min.jpg" data-trash-lightbox2="554;938;/files/1571085_593c29/frame_1.png;-max1.jpg 472 800,-thumb.jpg 53 90,-orig.jpg 554 938,_minx2.jpg 472 800,_min.jpg 236 400" width="236" height="400"/> </div>',
 		login: "kekos",
 		avatar: "1939444_fe7997_big",
 		posted: "1619534421",
