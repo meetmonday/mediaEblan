@@ -1,3 +1,5 @@
+import type { FormattableString } from "gramio";
+
 export type MediaKind = "photo" | "video";
 
 export interface MediaItem {
@@ -44,12 +46,24 @@ export interface CaptionOptions {
 	statsOrder?: readonly StatKey[];
 	/** Provider-specific lines, rendered after the standard fields. */
 	extra?: readonly CaptionLine[];
+	/** Rich formatted body, rendered instead of the plain `title` quote. */
+	content?: FormattableString;
+	/** Explicit source link; falls back to the caller-supplied URL. */
+	sourceLink?: string;
 }
 
 export interface ProviderResult {
 	metadata: MediaMetadata;
 	items: MediaItem[];
 	caption?: CaptionOptions;
+	/**
+	 * Text-only result (no media) — sent as a plain message instead of an error.
+	 * `disableLinkPreview` turns off Telegram's automatic link preview.
+	 */
+	text?: {
+		content: FormattableString;
+		disableLinkPreview?: boolean;
+	};
 }
 
 /** A media item addressable by a direct URL (used by inline mode). */

@@ -1,5 +1,5 @@
 import { markdownToFormattable } from "@gramio/format/markdown";
-import { format } from "gramio";
+import type { FormattableString } from "gramio";
 import { NodeHtmlMarkdown } from "node-html-markdown";
 import { captionFor } from "../media/caption.ts";
 import { ProviderError } from "../providers/errors.ts";
@@ -30,6 +30,11 @@ export interface CommentUrl {
 	topicId: number;
 	commentId: number;
 	host: string;
+}
+
+/** True when the URL points at a Trashbox comment (host + `#div_comment_` anchor). */
+export function isCommentUrl(url: URL): boolean {
+	return ACCEPTED_DOMAINS.has(url.host) && COMMENT_ANCHOR.test(url.hash);
 }
 
 /** Returns the first URL with a `#div_comment_` anchor in the text, or `null`. */
@@ -182,25 +187,43 @@ export function commentMediaSources(html: string): string[] {
 	return urls;
 }
 
-/** Builds the formatted comment message — same style as media captions. */
-export function buildCommentMessage(
-	comment: TrashboxComment,
-	sourceUrl: string,
-	includeImages = true,
-): ReturnType<typeof format> {
+/** Comment metadata (author, likes, date) — feeds media captions. */
+export function commentMetadata(comment: TrashboxComment): MediaMetadata {
 	const votes = parseInt(comment.votes, 10);
-	const metadata: MediaMetadata = {
+	return {
 		author: { displayName: comment.login },
 		likes: votes !== 0 ? votes : undefined,
 		date: comment.posted
 			? new Date(parseInt(comment.posted, 10) * 1000).toISOString()
 			: undefined,
 	};
-	return format`
-		${captionFor(metadata).build()}
+}
 
-		${markdownToFormattable(htmlCleaner(comment.content, !includeImages))}
+/**
+ * Cleaned comment body as rich text. With `includeImages` the `<img>` tags
+ * become clickable links; without them they're stripped entirely (used when
+ * the images are already sent as separate media).
+ */
+export function commentBody(
+	comment: TrashboxComment,
+	includeImages = true,
+): FormattableString {
+	return markdownToFormattable(htmlCleaner(comment.content, !includeImages));
+}
 
-		🔗 ${sourceUrl}
-	`;
+/**
+ * Full formatted comment message — same style as media captions: metadata,
+ * body, then the source link. Shared by the Trashbox provider (which splits
+ * it back into `content` + `sourceLink` for media captions) and the inline
+ * article special-case.
+ */
+export function commentMessage(
+	comment: TrashboxComment,
+	sourceUrl: string,
+	includeImages = true,
+): FormattableString {
+	return captionFor(commentMetadata(comment), {
+		content: commentBody(comment, includeImages),
+		sourceLink: sourceUrl,
+	}).build();
 }

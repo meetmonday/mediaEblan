@@ -108,6 +108,15 @@ export class CaptionBuilder {
 		return this;
 	}
 
+	/** Rich formatted body — replaces the plain `text` quote when provided. */
+	content(value?: FormattableString): this {
+		if (value) {
+			this.lines.push(value);
+			this.hasContent = true;
+		}
+		return this;
+	}
+
 	/** Separate hashtags. Providers whose tags are already in the text skip this. */
 	tags(values?: string[], max = 10): this {
 		if (!values || values.length === 0) return this;
@@ -174,19 +183,33 @@ export class CaptionBuilder {
 
 /**
  * Builds the standard media caption from metadata:
- * author (+place), main text as a quote, tags, then stats and date.
- * Provider-specific tweaks (stat order, extra lines) come from `options`.
+ * author (+place), main text as a quote (or rich `content` when provided),
+ * tags, then stats and date.
+ * Provider-specific tweaks (stat order, extra lines, content, source link)
+ * come from `options`; `sourceUrl` is the fallback for the source link when
+ * the provider didn't set one explicitly.
  */
 export function captionFor(
 	metadata: MediaMetadata,
 	options?: CaptionOptions,
+	sourceUrl?: string,
 ): CaptionBuilder {
 	return new CaptionBuilder()
 		.author(metadata.author, metadata.place)
-		.text(metadata.title)
+		.text(options?.content ? undefined : metadata.title)
+		.content(options?.content)
 		.tags(metadata.tags)
 		.separator()
 		.stats(metadata, options?.statsOrder)
 		.date(metadata.date)
-		.extra(...(options?.extra ?? []));
+		.extra(...(options?.extra ?? []))
+		.sourceLink(options?.sourceLink ?? sourceUrl);
+}
+
+/** Rebuilds the caption of a cached hit from its stored metadata and options. */
+export function cachedCaption(
+	entry: { metadata: MediaMetadata; caption?: CaptionOptions },
+	sourceUrl?: string,
+): FormattableString {
+	return captionFor(entry.metadata, entry.caption, sourceUrl).build();
 }

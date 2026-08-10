@@ -1,14 +1,14 @@
 import type { TelegramInlineQueryResult } from "@gramio/types";
 import { Composer, InlineQueryResult, InputMessageContent } from "gramio";
 import { mediaCache } from "../media/cache.ts";
-import { captionFor } from "../media/caption.ts";
+import { cachedCaption, captionFor } from "../media/caption.ts";
 import { composer } from "../plugins/index.ts";
 import { findMediaUrl, resolveProvider } from "../providers/registry.ts";
 import type { DirectMediaResult, MediaMetadata } from "../providers/types.ts";
 import { pendingLinks } from "../services/pending-links.ts";
 import type { TrashboxComment } from "../services/trashbox.ts";
 import {
-	buildCommentMessage,
+	commentMessage,
 	fetchComment,
 	findCommentUrl,
 	resolveCommentUrl,
@@ -48,9 +48,7 @@ function toInlineResults(
 	{ metadata, items, caption }: DirectMediaResult,
 	sourceUrl: string,
 ): TelegramInlineQueryResult[] {
-	const captionText = captionFor(metadata, caption)
-		.sourceLink(sourceUrl)
-		.build();
+	const captionText = captionFor(metadata, caption, sourceUrl).build();
 	const results: TelegramInlineQueryResult[] = [];
 	for (const [index, item] of items.entries()) {
 		if (item.kind === "photo") {
@@ -87,7 +85,7 @@ function commentResults(
 	sourceUrl: string,
 ): TelegramInlineQueryResult[] {
 	// Always a text article — comment images are embedded as clickable links.
-	const message = buildCommentMessage(comment, sourceUrl);
+	const message = commentMessage(comment, sourceUrl);
 	const text = message.toString();
 	return [
 		InlineQueryResult.article(
@@ -132,9 +130,7 @@ export const inlineComposer = new Composer()
 		try {
 			const cached = mediaCache.get(url.toString());
 			if (cached) {
-				const captionText = captionFor(cached.metadata, cached.caption)
-					.sourceLink(url.toString())
-					.build();
+				const captionText = cachedCaption(cached, url.toString());
 				const result =
 					cached.kind === "photo"
 						? InlineQueryResult.cached.photo("0", cached.fileId, {

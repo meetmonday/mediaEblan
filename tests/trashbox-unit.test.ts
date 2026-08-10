@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-	buildCommentMessage,
+	commentMessage,
 	findCommentUrl,
 	resolveCommentUrl,
 } from "../src/services/trashbox.ts";
@@ -71,7 +71,7 @@ describe("trashbox comment message", () => {
 	const sourceUrl = "https://trashbox.ru/topics/132125/mm#div_comment_1334063";
 
 	test("embeds comment images as clickable text links with the URL as label", () => {
-		const message = buildCommentMessage(comment, sourceUrl);
+		const message = commentMessage(comment, sourceUrl);
 		const text = message.toString();
 		expect(text).toContain("🖼");
 		expect(text).toContain(

@@ -13,7 +13,7 @@ import type {
 } from "../providers/types.ts";
 import { verrou } from "../services/locks.ts";
 import { mediaCache } from "./cache.ts";
-import { captionFor } from "./caption.ts";
+import { cachedCaption, captionFor } from "./caption.ts";
 import { compressVideo, fileSize } from "./ffmpeg.ts";
 
 /**
@@ -36,6 +36,11 @@ export interface MediaSender {
 	sendMediaGroup(
 		inputs: MediaGroupInput[],
 		caption?: FormattableString,
+	): Promise<unknown>;
+	/** Sends a text-only result (a comment without media). */
+	sendText(
+		text: FormattableString,
+		opts?: { disableLinkPreview?: boolean },
 	): Promise<unknown>;
 }
 
@@ -138,9 +143,7 @@ export async function processMedia(
 		if (cached) {
 			await sender.sendPhoto(
 				cached.fileId,
-				captionFor(cached.metadata, cached.caption)
-					.sourceLink(includeSourceLink ? sourceUrl : undefined)
-					.build(),
+				cachedCaption(cached, includeSourceLink ? sourceUrl : undefined),
 			);
 			return;
 		}
@@ -160,12 +163,21 @@ export async function processMedia(
 			url,
 			config.DOWNLOAD_DIR,
 		);
-		if (result.items.length === 0)
+		if (result.items.length === 0) {
+			if (result.text) {
+				await sender.sendText(result.text.content, {
+					disableLinkPreview: result.text.disableLinkPreview,
+				});
+				return;
+			}
 			throw new MediaError("no-media", "В ссылке не найдено медиа");
+		}
 
-		const caption = captionFor(result.metadata, result.caption)
-			.sourceLink(includeSourceLink ? sourceUrl : undefined)
-			.build();
+		const caption = captionFor(
+			result.metadata,
+			result.caption,
+			includeSourceLink ? sourceUrl : undefined,
+		).build();
 		try {
 			const prepare = async (item: MediaItem): Promise<MediaGroupInput> => {
 				await sender.chatAction(

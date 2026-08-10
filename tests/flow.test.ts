@@ -3,6 +3,7 @@ import { afterAll, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { TelegramTestEnvironment } from "@gramio/test";
+import { format } from "gramio";
 import { bot } from "../src/bot.ts";
 import { mediaCache } from "../src/media/cache.ts";
 import { MediaError } from "../src/media/pipeline.ts";
@@ -12,12 +13,23 @@ import type { Provider } from "../src/providers/types.ts";
 const registryPath = join(import.meta.dir, "../src/providers/registry.ts");
 
 // Provider is swapped per-test through `scenario`.
-let scenario: "photo" | "video" | "multi" | "mixed" = "photo";
+let scenario: "photo" | "video" | "multi" | "mixed" | "text" | "text-preview" =
+	"photo";
 const fakeProvider: Provider = {
 	name: "fake",
 	match: () => true,
 	fetch: async (_url, downloadDir) => {
 		await mkdir(downloadDir, { recursive: true });
+		if (scenario === "text" || scenario === "text-preview") {
+			return {
+				metadata: { author: { displayName: "Kekos" } },
+				items: [],
+				text: {
+					content: format`Комментарий без медиа`,
+					disableLinkPreview: scenario === "text",
+				},
+			};
+		}
 		if (scenario === "video") {
 			await writeFile(join(downloadDir, "item.mp4"), Buffer.alloc(1_024));
 			return {
@@ -127,6 +139,30 @@ describe("flow: chat media", () => {
 		expect(call?.params.caption?.toString()).toContain(
 			"👤 VideoCat (@video_cat)",
 		);
+	});
+
+	test("text-only result → plain message with link preview disabled", async () => {
+		scenario = "text";
+		const { env, user } = makeEnv();
+
+		await user.sendMessage("https://example.com/comment");
+
+		const call = env.lastApiCall("sendMessage");
+		expect(call).toBeDefined();
+		expect(call?.params.text?.toString()).toContain("Комментарий без медиа");
+		expect(call?.params.link_preview_options?.is_disabled).toBe(true);
+		expect(env.filterApiCalls("sendPhoto")).toHaveLength(0);
+	});
+
+	test("text-only result with an image → link preview left enabled", async () => {
+		scenario = "text-preview";
+		const { env, user } = makeEnv();
+
+		await user.sendMessage("https://example.com/comment-with-image");
+
+		const call = env.lastApiCall("sendMessage");
+		expect(call).toBeDefined();
+		expect(call?.params.link_preview_options).toBeUndefined();
 	});
 
 	test("multi-image link → one media group, caption on the first item", async () => {

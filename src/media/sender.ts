@@ -1,8 +1,11 @@
+import type { FormattableString } from "gramio";
 import { MediaInput, MediaUpload } from "gramio";
 import { ProviderError } from "../providers/errors.ts";
 import { HttpError } from "../providers/http.ts";
 import type { MediaGroupInput, MediaSender } from "./pipeline.ts";
 import { MediaError, processMedia } from "./pipeline.ts";
+
+type TextLike = string | FormattableString;
 
 /**
  * The slice of a GramIO message context needed to deliver media.
@@ -22,7 +25,7 @@ export interface ReplyMediaContext {
 		media: readonly unknown[],
 		params?: object,
 	): Promise<unknown>;
-	reply(text: string, params?: object): Promise<unknown>;
+	reply(text: TextLike, params?: object): Promise<unknown>;
 	sendPhoto(
 		photo: string | File,
 		params?: object,
@@ -32,7 +35,7 @@ export interface ReplyMediaContext {
 		params?: object,
 	): Promise<{ video?: { fileId?: string } }>;
 	sendMediaGroup(media: readonly unknown[], params?: object): Promise<unknown>;
-	send(text: string, params?: object): Promise<unknown>;
+	send(text: TextLike, params?: object): Promise<unknown>;
 }
 
 type Upload = Awaited<ReturnType<typeof MediaUpload.path>> | string;
@@ -80,6 +83,13 @@ export function senderFrom(
 			);
 			if (reply) await context.replyWithMediaGroup(media);
 			else await context.sendMediaGroup(media);
+		},
+		sendText: async (text, opts) => {
+			const params = opts?.disableLinkPreview
+				? { link_preview_options: { is_disabled: true } }
+				: undefined;
+			if (reply) await context.reply(text, params);
+			else await context.send(text, params);
 		},
 	};
 }

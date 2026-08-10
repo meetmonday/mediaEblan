@@ -3,13 +3,11 @@ import { config } from "./config.ts";
 import { mediaComposer } from "./handlers/chat.ts";
 import { inlineComposer } from "./handlers/inline.ts";
 import { startComposer } from "./handlers/start.ts";
-import { trashboxComposer } from "./handlers/trashbox.ts";
 import { composer } from "./plugins/index.ts";
 
 export const bot = new Bot(config.BOT_TOKEN)
 	.extend(composer)
 	.extend(startComposer)
-	.extend(trashboxComposer)
 	.extend(mediaComposer)
 	.extend(inlineComposer)
 	.onStart(({ info }) => {
