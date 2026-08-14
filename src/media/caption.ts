@@ -182,19 +182,34 @@ export class CaptionBuilder {
 }
 
 /**
+ * Appends the `🔗 url` line to an already-formatted text-only result, exactly
+ * like `CaptionBuilder.sourceLink`. Used when a provider returned the content
+ * without the source link (in `text.sourceUrl`) and no buttons are attached.
+ */
+export function appendSourceLink(
+	content: FormattableString,
+	url: string,
+): FormattableString {
+	return join([content, link(`🔗 ${url}`, url)], "\n\n");
+}
+
+/**
  * Builds the standard media caption from metadata:
  * author (+place), main text as a quote (or rich `content` when provided),
  * tags, then stats and date.
  * Provider-specific tweaks (stat order, extra lines, content, source link)
  * come from `options`; `sourceUrl` is the fallback for the source link when
  * the provider didn't set one explicitly.
+ * With `includeSourceLink = false` the source link line is dropped entirely —
+ * used when the source is exposed via buttons instead of caption text.
  */
 export function captionFor(
 	metadata: MediaMetadata,
 	options?: CaptionOptions,
 	sourceUrl?: string,
+	includeSourceLink = true,
 ): CaptionBuilder {
-	return new CaptionBuilder()
+	const builder = new CaptionBuilder()
 		.author(metadata.author, metadata.place)
 		.text(options?.content ? undefined : metadata.title)
 		.content(options?.content)
@@ -202,14 +217,22 @@ export function captionFor(
 		.separator()
 		.stats(metadata, options?.statsOrder)
 		.date(metadata.date)
-		.extra(...(options?.extra ?? []))
-		.sourceLink(options?.sourceLink ?? sourceUrl);
+		.extra(...(options?.extra ?? []));
+	return includeSourceLink
+		? builder.sourceLink(options?.sourceLink ?? sourceUrl)
+		: builder;
 }
 
 /** Rebuilds the caption of a cached hit from its stored metadata and options. */
 export function cachedCaption(
 	entry: { metadata: MediaMetadata; caption?: CaptionOptions },
 	sourceUrl?: string,
+	includeSourceLink = true,
 ): FormattableString {
-	return captionFor(entry.metadata, entry.caption, sourceUrl).build();
+	return captionFor(
+		entry.metadata,
+		entry.caption,
+		sourceUrl,
+		includeSourceLink,
+	).build();
 }

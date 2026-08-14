@@ -59,10 +59,14 @@ export interface ProviderResult {
 	/**
 	 * Text-only result (no media) — sent as a plain message instead of an error.
 	 * `disableLinkPreview` turns off Telegram's automatic link preview.
+	 * `sourceUrl` lets the pipeline decide how the source link is rendered:
+	 * as a `🔗 url` caption line (chat mode) or as «Открыть»/«Поделиться»
+	 * buttons (deep-link/inline). When set, `content` must NOT include the link.
 	 */
 	text?: {
 		content: FormattableString;
 		disableLinkPreview?: boolean;
+		sourceUrl?: string;
 	};
 }
 

@@ -58,6 +58,9 @@ describe("flow: trashbox comments", () => {
 		const call = env.lastApiCall("sendMessage");
 		expect(call).toBeDefined();
 		expect(call?.params.text?.toString()).toContain("Тестер");
+		expect(call?.params.text?.toString()).toContain(
+			"🔗 https://trashbox.ru/topics/207704/luchshij-brauzer#div_comment_1426028",
+		);
 		expect(call?.params.link_preview_options?.is_disabled).toBe(true);
 		expect(env.filterApiCalls("deleteMessage")).toHaveLength(0);
 	});

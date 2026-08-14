@@ -18,7 +18,7 @@ let scenario: "photo" | "video" | "multi" | "mixed" | "text" | "text-preview" =
 const fakeProvider: Provider = {
 	name: "fake",
 	match: () => true,
-	fetch: async (_url, downloadDir) => {
+	fetch: async (url, downloadDir) => {
 		await mkdir(downloadDir, { recursive: true });
 		if (scenario === "text" || scenario === "text-preview") {
 			return {
@@ -27,6 +27,7 @@ const fakeProvider: Provider = {
 				text: {
 					content: format`Комментарий без медиа`,
 					disableLinkPreview: scenario === "text",
+					sourceUrl: url.toString(),
 				},
 			};
 		}
@@ -150,6 +151,9 @@ describe("flow: chat media", () => {
 		const call = env.lastApiCall("sendMessage");
 		expect(call).toBeDefined();
 		expect(call?.params.text?.toString()).toContain("Комментарий без медиа");
+		expect(call?.params.text?.toString()).toContain(
+			"🔗 https://example.com/comment",
+		);
 		expect(call?.params.link_preview_options?.is_disabled).toBe(true);
 		expect(env.filterApiCalls("sendPhoto")).toHaveLength(0);
 	});
@@ -321,6 +325,19 @@ describe("flow: inline", () => {
 		expect(call?.params.results[1]?.thumbnail_url).toBe(
 			"https://pbs.twimg.com/media/photo.jpg",
 		);
+		// @ts-expect-error -- result is a discriminated union
+		expect(call?.params.results[0]?.caption?.toString()).not.toContain("🔗");
+		// @ts-expect-error -- result is a discriminated union
+		const buttons = JSON.parse(
+			JSON.stringify(call?.params.results[0]?.reply_markup),
+		);
+		expect(buttons.inline_keyboard[0].map((button) => button.text)).toEqual([
+			"Открыть",
+			"Поделиться",
+		]);
+		expect(buttons.inline_keyboard[0][0].url).toBe(
+			"https://example.com/inline",
+		);
 	});
 
 	test("provider without direct URLs → empty results + open-bot button", async () => {
@@ -349,10 +366,48 @@ describe("flow: inline", () => {
 		expect(env.lastApiCall("sendPhoto")?.params.caption?.toString()).toContain(
 			"Солнечный день",
 		);
-		expect(env.lastApiCall("sendPhoto")?.params.caption?.toString()).toContain(
-			"🔗 https://example.com/deep-link",
+		expect(
+			env.lastApiCall("sendPhoto")?.params.caption?.toString(),
+		).not.toContain("🔗");
+		const buttons = JSON.parse(
+			JSON.stringify(env.lastApiCall("sendPhoto")?.params.reply_markup),
+		);
+		expect(buttons.inline_keyboard[0].map((button) => button.text)).toEqual([
+			"Открыть",
+			"Поделиться",
+		]);
+		expect(buttons.inline_keyboard[0][0].url).toBe(
+			"https://example.com/deep-link",
+		);
+		expect(buttons.inline_keyboard[0][1].url).toBe(
+			"https://t.me/share/url?url=https%3A%2F%2Fexample.com%2Fdeep-link",
 		);
 		expect(env.filterApiCalls("deleteMessage")).toHaveLength(1);
+	});
+
+	test("deep-link text-only result → buttons instead of the source link line", async () => {
+		scenario = "text";
+		const { env, user } = makeEnv();
+
+		await user.sendInlineQuery("https://example.com/text-deep-link");
+		const token =
+			env.lastApiCall("answerInlineQuery")?.params.button?.start_parameter;
+		expect(token).toBeTruthy();
+
+		await user.sendCommand("start", token);
+
+		const call = env.lastApiCall("sendMessage");
+		expect(call).toBeDefined();
+		expect(call?.params.text?.toString()).toContain("Комментарий без медиа");
+		expect(call?.params.text?.toString()).not.toContain("🔗");
+		const buttons = JSON.parse(JSON.stringify(call?.params.reply_markup));
+		expect(buttons.inline_keyboard[0].map((button) => button.text)).toEqual([
+			"Открыть",
+			"Поделиться",
+		]);
+		expect(buttons.inline_keyboard[0][0].url).toBe(
+			"https://example.com/text-deep-link",
+		);
 	});
 
 	test("cached media → cached photo result with file_id", async () => {
@@ -372,6 +427,8 @@ describe("flow: inline", () => {
 		expect(call?.params.results[0]?.type).toBe("photo");
 		// @ts-expect-error -- result is a discriminated union
 		expect(call?.params.results[0]?.photo_file_id).toBe("file_id_123");
+		// @ts-expect-error -- result is a discriminated union
+		expect(call?.params.results[0]?.reply_markup).toBeDefined();
 	});
 
 	test("query with a link-like text but unsupported host → empty results", async () => {

@@ -35,8 +35,9 @@ export const trashboxProvider: Provider = {
 				metadata,
 				items: [],
 				text: {
-					content: commentMessage(comment, sourceUrl),
+					content: commentMessage(comment, sourceUrl, true, false),
 					disableLinkPreview: firstImgSrc(comment.content) === null,
+					sourceUrl,
 				},
 			};
 		}

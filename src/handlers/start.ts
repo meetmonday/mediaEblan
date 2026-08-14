@@ -20,7 +20,7 @@ export const startComposer = new Composer()
 			const sourceUrl = context.args ? pendingLinks.get(context.args) : null;
 			if (sourceUrl) {
 				await sendMedia(context, new URL(sourceUrl), {
-					includeSourceLink: true,
+					withSourceButtons: true,
 					reply: false,
 				});
 				await context.delete().catch(() => {});

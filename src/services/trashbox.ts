@@ -215,15 +215,18 @@ export function commentBody(
  * Full formatted comment message — same style as media captions: metadata,
  * body, then the source link. Shared by the Trashbox provider (which splits
  * it back into `content` + `sourceLink` for media captions) and the inline
- * article special-case.
+ * article special-case. With `includeSourceLink = false` the link line is
+ * dropped — used when the source is exposed via buttons instead of text.
  */
 export function commentMessage(
 	comment: TrashboxComment,
 	sourceUrl: string,
 	includeImages = true,
+	includeSourceLink = true,
 ): FormattableString {
-	return captionFor(commentMetadata(comment), {
+	const options = {
 		content: commentBody(comment, includeImages),
-		sourceLink: sourceUrl,
-	}).build();
+		sourceLink: includeSourceLink ? sourceUrl : undefined,
+	};
+	return captionFor(commentMetadata(comment), options).build();
 }

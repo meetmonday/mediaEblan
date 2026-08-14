@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
-import type { FormattableString } from "gramio";
+import type { FormattableString, InlineKeyboard } from "gramio";
 import { config } from "../config.ts";
 import { ProviderError } from "../providers/errors.ts";
 import { HttpError } from "../providers/http.ts";
@@ -12,8 +12,9 @@ import type {
 	ProviderResult,
 } from "../providers/types.ts";
 import { verrou } from "../services/locks.ts";
+import { sourceButtons } from "../shared/keyboards/index.ts";
 import { mediaCache } from "./cache.ts";
-import { cachedCaption, captionFor } from "./caption.ts";
+import { appendSourceLink, cachedCaption, captionFor } from "./caption.ts";
 import { CompressionError, compressVideo, fileSize } from "./ffmpeg.ts";
 
 /**
@@ -26,21 +27,29 @@ export interface MediaSender {
 	sendPhoto(
 		input: string,
 		caption?: FormattableString,
+		keyboard?: InlineKeyboard,
 	): Promise<{ fileId: string }>;
 	/** `input` is either a local path or an already-known file_id. */
 	sendVideo(
 		input: string,
 		caption?: FormattableString,
+		keyboard?: InlineKeyboard,
 	): Promise<{ fileId: string }>;
-	/** Sends several items as a single album. Caption lands on the first item. */
+	/**
+	 * Sends several items as a single album. Caption lands on the first item.
+	 * Albums can't carry inline keyboards — with `keyboard` the sender must
+	 * deliver the buttons in a separate message.
+	 */
 	sendMediaGroup(
 		inputs: MediaGroupInput[],
 		caption?: FormattableString,
+		keyboard?: InlineKeyboard,
 	): Promise<unknown>;
 	/** Sends a text-only result (a comment without media). */
 	sendText(
 		text: FormattableString,
 		opts?: { disableLinkPreview?: boolean },
+		keyboard?: InlineKeyboard,
 	): Promise<unknown>;
 }
 
@@ -126,24 +135,39 @@ async function fetchProviderResult(
 }
 
 /**
+ * Options for delivering media from a source URL.
+ */
+export interface ProcessMediaOptions {
+	/**
+	 * Pin «Открыть»/«Поделиться» buttons under the message and drop the
+	 * `🔗 url` line from the caption. Used by the deep-link flow and inline
+	 * results, where the source link is exposed via buttons instead of text.
+	 */
+	withSourceButtons?: boolean;
+}
+
+/**
  * Downloads media from a supported URL and sends it through `sender`.
  * The first item carries a caption built from the source metadata.
  * Cached URLs send the stored file_id directly, without re-downloading.
- * With `includeSourceLink`, the caption gets a `🔗 <url>` line (like inline).
+ * With `withSourceButtons`, the caption's source link is replaced by two
+ * buttons under the message («Открыть», «Поделиться»).
  */
 export async function processMedia(
 	url: URL,
 	sender: MediaSender,
-	includeSourceLink = false,
+	options: ProcessMediaOptions = {},
 ): Promise<void> {
 	const sourceUrl = url.toString();
+	const withButtons = options.withSourceButtons ?? false;
 
 	await verrou.createLock(lockKeyFor(url), "5 minutes").run(async () => {
 		const cached = mediaCache.get(sourceUrl);
 		if (cached) {
 			await sender.sendPhoto(
 				cached.fileId,
-				cachedCaption(cached, includeSourceLink ? sourceUrl : undefined),
+				cachedCaption(cached, undefined, !withButtons),
+				withButtons ? sourceButtons(sourceUrl) : undefined,
 			);
 			return;
 		}
@@ -163,11 +187,19 @@ export async function processMedia(
 			url,
 			config.DOWNLOAD_DIR,
 		);
+		const keyboard = withButtons ? sourceButtons(sourceUrl) : undefined;
+
 		if (result.items.length === 0) {
 			if (result.text) {
-				await sender.sendText(result.text.content, {
-					disableLinkPreview: result.text.disableLinkPreview,
-				});
+				const content =
+					result.text.sourceUrl && !withButtons
+						? appendSourceLink(result.text.content, result.text.sourceUrl)
+						: result.text.content;
+				await sender.sendText(
+					content,
+					{ disableLinkPreview: result.text.disableLinkPreview },
+					keyboard,
+				);
 				return;
 			}
 			throw new MediaError("no-media", "В ссылке не найдено медиа");
@@ -176,7 +208,8 @@ export async function processMedia(
 		const caption = captionFor(
 			result.metadata,
 			result.caption,
-			includeSourceLink ? sourceUrl : undefined,
+			undefined,
+			!withButtons,
 		).build();
 		try {
 			const prepare = async (item: MediaItem): Promise<MediaGroupInput> => {
@@ -208,8 +241,8 @@ export async function processMedia(
 				const { kind, input } = await prepare(first);
 				const { fileId } =
 					kind === "photo"
-						? await sender.sendPhoto(input, caption)
-						: await sender.sendVideo(input, caption);
+						? await sender.sendPhoto(input, caption, keyboard)
+						: await sender.sendVideo(input, caption, keyboard);
 				mediaCache.set(sourceUrl, {
 					kind,
 					fileId,
@@ -219,7 +252,7 @@ export async function processMedia(
 			} else {
 				const inputs: MediaGroupInput[] = [];
 				for (const item of result.items) inputs.push(await prepare(item));
-				await sender.sendMediaGroup(inputs, caption);
+				await sender.sendMediaGroup(inputs, caption, keyboard);
 			}
 		} finally {
 			await cleanup(result.items);

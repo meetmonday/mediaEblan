@@ -13,6 +13,7 @@ import {
 	findCommentUrl,
 	resolveCommentUrl,
 } from "../services/trashbox.ts";
+import { sourceButtons } from "../shared/keyboards/index.ts";
 
 const ANSWER_OPTIONS = { cache_time: 0, is_personal: true } as const;
 
@@ -48,7 +49,8 @@ function toInlineResults(
 	{ metadata, items, caption }: DirectMediaResult,
 	sourceUrl: string,
 ): TelegramInlineQueryResult[] {
-	const captionText = captionFor(metadata, caption, sourceUrl).build();
+	const captionText = captionFor(metadata, caption, undefined, false).build();
+	const replyMarkup = sourceButtons(sourceUrl);
 	const results: TelegramInlineQueryResult[] = [];
 	for (const [index, item] of items.entries()) {
 		if (item.kind === "photo") {
@@ -60,6 +62,7 @@ function toInlineResults(
 					{
 						caption: captionText,
 						title: resultTitle(metadata, "Фото", index),
+						reply_markup: replyMarkup,
 					},
 				),
 			);
@@ -72,6 +75,7 @@ function toInlineResults(
 					item.thumbnailUrl,
 					{
 						caption: captionText,
+						reply_markup: replyMarkup,
 					},
 				),
 			);
@@ -85,7 +89,7 @@ function commentResults(
 	sourceUrl: string,
 ): TelegramInlineQueryResult[] {
 	// Always a text article — comment images are embedded as clickable links.
-	const message = commentMessage(comment, sourceUrl);
+	const message = commentMessage(comment, sourceUrl, true, false);
 	const text = message.toString();
 	return [
 		InlineQueryResult.article(
@@ -94,6 +98,7 @@ function commentResults(
 			InputMessageContent.text(text, { entities: message.entities }),
 			{
 				url: sourceUrl,
+				reply_markup: sourceButtons(sourceUrl),
 				description: text.split("\n").find(Boolean)?.slice(0, 100),
 			},
 		),
@@ -130,11 +135,13 @@ export const inlineComposer = new Composer()
 		try {
 			const cached = mediaCache.get(url.toString());
 			if (cached) {
-				const captionText = cachedCaption(cached, url.toString());
+				const captionText = cachedCaption(cached, undefined, false);
+				const replyMarkup = sourceButtons(url.toString());
 				const result =
 					cached.kind === "photo"
 						? InlineQueryResult.cached.photo("0", cached.fileId, {
 								caption: captionText,
+								reply_markup: replyMarkup,
 							})
 						: InlineQueryResult.cached.video(
 								"0",
@@ -142,6 +149,7 @@ export const inlineComposer = new Composer()
 								cached.fileId,
 								{
 									caption: captionText,
+									reply_markup: replyMarkup,
 								},
 							);
 				return context.answer([result], {

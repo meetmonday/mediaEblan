@@ -123,7 +123,7 @@ bun test:e2e     # Real-network e2e over links.txt (on-demand, see Testing)
 - **Use the shared helpers** (`providers/helpers.ts`): `extensionOf` (extension from a URL), `makeAuthor` (author object), `epochToIso` (unix → ISO — **always** normalize dates at the provider boundary), `kindFromPath`/forced `kind`, and `downloadMediaSources(sources, dir, { sequential, headers, kind })` which cleans up partial downloads on failure. Pixiv must pass `sequential: true` — i.pximg.net throttles parallel connections.
 - **Parse once**: each provider exports `parse(url): { id } | null` and reuses it in `match`, `fetch`, and `resolveDirect` instead of re-extracting the id.
 - **Network calls** go through `providers/http.ts` (`fetchJson`, `fetchWithTimeout`, `downloadTo`, `fetchRedirect`) — they already wrap failures as `HttpError`/`NetworkError`.
-- **Text-only results** (e.g. a comment without images) are returned as `ProviderResult.text: { content, disableLinkPreview }` with `items: []` — the pipeline sends them via `sendText`, they are not errors.
+- **Text-only results** (e.g. a comment without images) are returned as `ProviderResult.text: { content, disableLinkPreview, sourceUrl }` with `items: []`. `content` excludes the source link; the pipeline appends it as a `🔗 url` line (chat) or attaches the buttons (deep-link/inline). They are sent via `sendText`, not treated as errors.
 
 ## Architecture
 
@@ -155,16 +155,17 @@ export const myComposer = new Composer()
 
 ### Media pipeline
 
-`src/media/pipeline.ts` exposes `processMedia(url, sender, includeSourceLink)` — the single path that turns a link into media, shared by chat (`handlers/chat.ts`) and deep-links (`handlers/start.ts`). Flow per URL:
+`src/media/pipeline.ts` exposes `processMedia(url, sender, { withSourceButtons })` — the single path that turns a link into media, shared by chat (`handlers/chat.ts`) and deep-links (`handlers/start.ts`). Flow per URL:
 
 1. **Lock** — Verrou per-URL mutex, so concurrent identical links are processed once.
 2. **Cache hit** — in-memory `mediaCache` (URL → `file_id`) sends the stored `file_id` with `cachedCaption`, no re-download.
 3. **Fetch** — `resolveProvider(url)`; a missing provider is a `MediaError("unsupported", …)` listing the supported sites.
 4. **Retry** — `fetchProviderResult` retries once on `HttpError`/`NetworkError`, never on `ProviderError` (see Conventions).
-5. **Text branch** — `result.items` empty with `result.text` → `sender.sendText(content, { disableLinkPreview })`; cached nothing.
+5. **Text branch** — `result.items` empty with `result.text` → `sender.sendText(content, { disableLinkPreview }, keyboard)`; cached nothing. `text.content` must NOT include the source link — the provider passes it via `text.sourceUrl`, and the pipeline appends the `🔗 url` line in chat mode or attaches the buttons when `withSourceButtons`.
 6. **Send** — videos above `MAX_FILE_SIZE_MB` are compressed via ffmpeg; single item → `sendPhoto`/`sendVideo`, several → `sendMediaGroup` (caption on the first item); the `file_id` is cached.
+7. **Source buttons** — with `withSourceButtons` (deep-link flow + inline results) the `🔗 url` caption line is dropped and replaced by two URL buttons (`sourceButtons` in `shared/keyboards/index.ts`): «Открыть» opens the source, «Поделиться» opens `t.me/share/url`. Albums can't carry inline keyboards — `senderFrom` sends the buttons in a follow-up message (zero-width-space text).
 
-`MediaSender` is a minimal interface (defined in `pipeline.ts`) so tests can inject a fake; `senderFrom(context)` in `media/sender.ts` adapts a GramIO context. Captions are built by `CaptionBuilder`/`captionFor` in `media/caption.ts`.
+`MediaSender` is a minimal interface (defined in `pipeline.ts`) so tests can inject a fake; each send method takes an optional `InlineKeyboard`. `senderFrom(context)` in `media/sender.ts` adapts a GramIO context. Captions are built by `CaptionBuilder`/`captionFor` in `media/caption.ts`; `captionFor`/`cachedCaption` take an `includeSourceLink` flag to suppress the source link line when buttons are used.
 
 ### Providers
 
