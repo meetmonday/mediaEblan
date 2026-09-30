@@ -1,6 +1,6 @@
 import { config } from "../config.ts";
 import { ProviderError } from "./errors.ts";
-import { downloadMediaSources, makeAuthor } from "./helpers.ts";
+import { downloadMediaSources, makeAuthor, mediaSources } from "./helpers.ts";
 import { fetchJson } from "./http.ts";
 import type {
 	DirectMediaItem,
@@ -9,6 +9,10 @@ import type {
 	Provider,
 	ProviderResult,
 } from "./types.ts";
+
+const NAME = "pixiv";
+const UNPARSEABLE = "Не удалось распознать ссылку Pixiv";
+const NO_IMAGE_URL = "Не удалось получить ссылку на изображение";
 
 const PIXIV_ORIGIN = "https://www.pixiv.net";
 
@@ -29,6 +33,13 @@ export function parse(url: URL): { id: string } | null {
 		return id ? { id } : null;
 	}
 	return null;
+}
+
+/** Artwork id from an URL, or a semantic error the user can act on. */
+function illustId(url: URL): string {
+	const parsed = parse(url);
+	if (!parsed) throw new ProviderError(NAME, UNPARSEABLE);
+	return parsed.id;
 }
 
 interface IllustBody {
@@ -52,6 +63,16 @@ interface PageBody {
 	};
 }
 
+/**
+ * Image URL of a page: the original resolution with a cookie configured,
+ * the regular size otherwise.
+ */
+function pageUrl(page: PageBody): string {
+	const src = config.PIXIV_COOKIE ? page.urls.original : page.urls.regular;
+	if (!src) throw new ProviderError(NAME, NO_IMAGE_URL);
+	return src;
+}
+
 async function fetchAjax<T>(url: string): Promise<T> {
 	const body = await fetchJson<{
 		error: boolean;
@@ -60,7 +81,7 @@ async function fetchAjax<T>(url: string): Promise<T> {
 	}>(url, { headers: IMG_HEADERS });
 	if (body.error || body.body === null) {
 		throw new ProviderError(
-			"pixiv",
+			NAME,
 			body.message ||
 				"Иллюстрация недоступна (возможно R-18 — нужен PIXIV_COOKIE)",
 		);
@@ -77,7 +98,7 @@ async function fetchIllust(
 	);
 	if (illust.illustType === 2) {
 		throw new ProviderError(
-			"pixiv",
+			NAME,
 			"Анимированные иллюстрации (ugoira) пока не поддерживаются",
 		);
 	}
@@ -86,7 +107,7 @@ async function fetchIllust(
 		`${PIXIV_ORIGIN}/ajax/illust/${id}/pages`,
 	);
 	if (pages.length === 0)
-		throw new ProviderError("pixiv", "В иллюстрации нет изображений");
+		throw new ProviderError(NAME, "В иллюстрации нет изображений");
 
 	return { illust, pages };
 }
@@ -119,59 +140,36 @@ export function proxyImageUrl(src: string): string {
 }
 
 async function resolveDirectPixiv(url: URL): Promise<DirectMediaResult> {
-	const parsed = parse(url);
-	if (!parsed)
-		throw new ProviderError("pixiv", "Не удалось распознать ссылку Pixiv");
+	const id = illustId(url);
 	if (!config.PIXIV_INLINE_PROXY) {
-		throw new ProviderError("pixiv", "Pixiv инлайн-режим отключён");
+		throw new ProviderError(NAME, "Pixiv инлайн-режим отключён");
 	}
 
-	const { illust, pages } = await fetchIllust(parsed.id);
-	const items: DirectMediaItem[] = pages.map((page) => {
-		const src = config.PIXIV_COOKIE ? page.urls.original : page.urls.regular;
-		if (!src)
-			throw new ProviderError(
-				"pixiv",
-				"Не удалось получить ссылку на изображение",
-			);
-		return { kind: "photo" as const, url: proxyImageUrl(src) };
-	});
+	const { illust, pages } = await fetchIllust(id);
+	const items: DirectMediaItem[] = pages.map((page) => ({
+		kind: "photo" as const,
+		url: proxyImageUrl(pageUrl(page)),
+	}));
 
 	return { metadata: metadataOf(illust), items };
 }
 
 export const pixivProvider: Provider = {
-	name: "pixiv",
+	name: NAME,
 	sites: ["Pixiv"],
 	match: (url) => parse(url) !== null,
 	async fetch(url, downloadDir): Promise<ProviderResult> {
-		const parsed = parse(url);
-		if (!parsed)
-			throw new ProviderError("pixiv", "Не удалось распознать ссылку Pixiv");
-
-		const { illust, pages } = await fetchIllust(parsed.id);
+		const id = illustId(url);
+		const { illust, pages } = await fetchIllust(id);
 
 		// Sequential — i.pximg.net throttles parallel connections from one IP.
 		const items = await downloadMediaSources(
-			pages.map((page, index) => {
-				const src = config.PIXIV_COOKIE
-					? page.urls.original
-					: page.urls.regular;
-				if (!src)
-					throw new ProviderError(
-						"pixiv",
-						"Не удалось получить ссылку на изображение",
-					);
-				return { url: src, name: `${parsed.id}_${index}` };
-			}),
+			mediaSources(id, pages.map(pageUrl)),
 			downloadDir,
 			{ headers: IMG_HEADERS, sequential: true },
 		);
 
-		return {
-			metadata: metadataOf(illust),
-			items,
-		};
+		return { metadata: metadataOf(illust), items };
 	},
 	async resolveDirect(url) {
 		return resolveDirectPixiv(url);

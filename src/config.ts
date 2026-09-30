@@ -7,8 +7,6 @@ export const config = {
 		.asEnum(["production", "test", "development"]),
 	BOT_TOKEN: env.get("BOT_TOKEN").required().asString(),
 
-	LOCK_STORE: env.get("LOCK_STORE").default("memory").asEnum(["memory"]),
-
 	// NOTE: provider settings below (PIXIV_*, REDDIT_*) are read once at
 	// module load inside src/providers/*. Provider factories are deferred —
 	// configure these env vars before the bot starts.
@@ -32,4 +30,8 @@ export const config = {
 
 	// Max video size in MB before ffmpeg compression kicks in
 	MAX_FILE_SIZE_MB: env.get("MAX_FILE_SIZE_MB").default("50").asIntPositive(),
+
+	// Answer Bot API 10 guest messages — links sent in chats the bot doesn't
+	// belong to. Off disables the guest flow entirely (inline/chat unaffected).
+	GUEST_MODE: env.get("GUEST_MODE").default("true").asBool(),
 };

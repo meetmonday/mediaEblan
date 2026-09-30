@@ -1,7 +1,7 @@
 import { pixivProvider } from "./pixiv.ts";
-import { redditProvider } from "./reddit.ts";
+import { redditProvider } from "./reddit/index.ts";
 import { tiktokProvider } from "./tiktok.ts";
-import { trashboxProvider } from "./trashbox.ts";
+import { trashboxProvider } from "./trashbox/index.ts";
 import { twitterProvider } from "./twitter.ts";
 import type { Provider } from "./types.ts";
 

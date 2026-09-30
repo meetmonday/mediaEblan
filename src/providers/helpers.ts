@@ -56,6 +56,22 @@ export interface DownloadMediaSourcesOptions {
 }
 
 /**
+ * Turns a batch of remote URLs into `MediaSource`s, naming them
+ * `<prefix>_<index>` — stable, sortable, and unique per post.
+ */
+export function mediaSources(
+	prefix: string,
+	urls: readonly string[],
+	kind?: MediaKind,
+): MediaSource[] {
+	return urls.map((url, index) => ({
+		url,
+		name: `${prefix}_${index}`,
+		...(kind ? { kind } : {}),
+	}));
+}
+
+/**
  * Downloads every source into `dir`. On any failure the already-downloaded
  * files are removed and the error is rethrown.
  */

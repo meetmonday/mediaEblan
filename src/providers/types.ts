@@ -58,15 +58,20 @@ export interface ProviderResult {
 	caption?: CaptionOptions;
 	/**
 	 * Text-only result (no media) — sent as a plain message instead of an error.
+	 * `content` is the body only: the pipeline renders it through the standard
+	 * caption layout (metadata + body + source link), so providers must not
+	 * format the surrounding lines themselves.
 	 * `disableLinkPreview` turns off Telegram's automatic link preview.
 	 * `sourceUrl` lets the pipeline decide how the source link is rendered:
 	 * as a `🔗 url` caption line (chat mode) or as «Открыть»/«Поделиться»
 	 * buttons (deep-link/inline). When set, `content` must NOT include the link.
+	 * `title` is the short label inline mode shows on the article result.
 	 */
 	text?: {
 		content: FormattableString;
 		disableLinkPreview?: boolean;
 		sourceUrl?: string;
+		title?: string;
 	};
 }
 

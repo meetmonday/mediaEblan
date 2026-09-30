@@ -1,6 +1,11 @@
 import { ProviderError } from "./errors.ts";
 import type { MediaSource } from "./helpers.ts";
-import { downloadMediaSources, epochToIso, makeAuthor } from "./helpers.ts";
+import {
+	downloadMediaSources,
+	epochToIso,
+	makeAuthor,
+	mediaSources,
+} from "./helpers.ts";
 import { fetchJson } from "./http.ts";
 import type {
 	CaptionOptions,
@@ -97,10 +102,7 @@ async function fetchTikTok(
 
 	const sources: MediaSource[] =
 		data.images && data.images.length > 0
-			? data.images.map((src, index) => ({
-					url: src,
-					name: `${data.id ?? "tiktok"}_${index}`,
-				}))
+			? mediaSources(data.id ?? "tiktok", data.images)
 			: [];
 	if (sources.length === 0) {
 		if (!data.play)

@@ -1,10 +1,9 @@
 import { markdownToFormattable } from "@gramio/format/markdown";
 import type { FormattableString } from "gramio";
 import { NodeHtmlMarkdown } from "node-html-markdown";
-import { captionFor } from "../media/caption.ts";
-import { ProviderError } from "../providers/errors.ts";
-import { fetchJson, fetchWithTimeout } from "../providers/http.ts";
-import type { MediaMetadata } from "../providers/types.ts";
+import { ProviderError } from "../errors.ts";
+import { fetchJson, fetchWithTimeout } from "../http.ts";
+import type { MediaMetadata } from "../types.ts";
 
 const ACCEPTED_DOMAINS = new Set(["trashbox.ru", "redspecial.ru"]);
 
@@ -209,24 +208,4 @@ export function commentBody(
 	includeImages = true,
 ): FormattableString {
 	return markdownToFormattable(htmlCleaner(comment.content, !includeImages));
-}
-
-/**
- * Full formatted comment message — same style as media captions: metadata,
- * body, then the source link. Shared by the Trashbox provider (which splits
- * it back into `content` + `sourceLink` for media captions) and the inline
- * article special-case. With `includeSourceLink = false` the link line is
- * dropped — used when the source is exposed via buttons instead of text.
- */
-export function commentMessage(
-	comment: TrashboxComment,
-	sourceUrl: string,
-	includeImages = true,
-	includeSourceLink = true,
-): FormattableString {
-	const options = {
-		content: commentBody(comment, includeImages),
-		sourceLink: includeSourceLink ? sourceUrl : undefined,
-	};
-	return captionFor(commentMetadata(comment), options).build();
 }

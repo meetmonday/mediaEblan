@@ -1,7 +1,5 @@
 import { HttpError, NetworkError } from "./errors.ts";
 
-export { HttpError } from "./errors.ts";
-
 const DEFAULT_TIMEOUT = 15_000;
 
 function isAbort(error: unknown): boolean {

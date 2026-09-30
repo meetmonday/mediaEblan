@@ -6,6 +6,7 @@ import {
 	epochToIso,
 	kindFromPath,
 	makeAuthor,
+	mediaSources,
 } from "./helpers.ts";
 import { fetchJson } from "./http.ts";
 import type {
@@ -14,6 +15,10 @@ import type {
 	Provider,
 	ProviderResult,
 } from "./types.ts";
+
+const NAME = "twitter";
+const UNPARSEABLE = "Не удалось распознать ссылку на твит";
+const NO_MEDIA = "В твите не найдено медиа";
 
 const TWEET_ID_PATTERN = /\/status\/(\d+)/;
 
@@ -24,10 +29,17 @@ export function parse(url: URL): { id: string } | null {
 	return id ? { id } : null;
 }
 
+/** Tweet id from a status URL, or a semantic error the user can act on. */
+function postId(url: URL): string {
+	const parsed = parse(url);
+	if (!parsed) throw new ProviderError(NAME, UNPARSEABLE);
+	return parsed.id;
+}
+
 interface FxTweet {
 	text?: string;
 	created_at?: string;
-	/** Unix seconds — normalized to ISO in `metadataOf` (see P6). */
+	/** Unix seconds — normalized to ISO in `metadataOf`. */
 	created_timestamp?: number;
 	author?: {
 		name: string;
@@ -76,6 +88,14 @@ function metadataOf(tweet: FxTweet): ProviderResult["metadata"] {
 	};
 }
 
+/** Photo and video attachments, always as arrays — shared by both flows. */
+function mediaOf(tweet: FxTweet) {
+	return {
+		photos: tweet.media?.photos ?? [],
+		videos: tweet.media?.videos ?? [],
+	};
+}
+
 /** Fetches the tweet JSON via fxTwitter without downloading any media. */
 async function fetchFxTweet(id: string): Promise<FxTweet | null> {
 	let body: FxResponse;
@@ -96,22 +116,21 @@ async function fetchViaFx(
 	const tweet = await fetchFxTweet(id);
 	if (!tweet) return null;
 
-	const photos = tweet.media?.photos ?? [];
-	const videos = tweet.media?.videos ?? [];
+	const { photos, videos } = mediaOf(tweet);
 	if (photos.length === 0 && videos.length === 0) return null;
 
 	const items = await downloadMediaSources(
 		[
-			...photos.map((photo, index) => ({
-				url: photo.url,
-				name: `${id}_${index}`,
-				kind: "photo" as const,
-			})),
-			...videos.map((video, index) => ({
-				url: video.url,
-				name: `${id}_v${index}`,
-				kind: "video" as const,
-			})),
+			...mediaSources(
+				id,
+				photos.map((photo) => photo.url),
+				"photo",
+			),
+			...mediaSources(
+				`${id}_v`,
+				videos.map((video) => video.url),
+				"video",
+			),
 		],
 		downloadDir,
 	);
@@ -145,7 +164,7 @@ async function fetchViaYtDlp(
 	} catch (error) {
 		if (!(error instanceof ProcError)) throw error;
 		throw new ProviderError(
-			"twitter",
+			NAME,
 			error.exitCode === null ? error.message : `yt-dlp: ${error.message}`,
 		);
 	}
@@ -154,8 +173,7 @@ async function fetchViaYtDlp(
 		.split("\n")
 		.map((line) => line.trim())
 		.filter(Boolean);
-	if (paths.length === 0)
-		throw new ProviderError("twitter", "В твите не найдено медиа");
+	if (paths.length === 0) throw new ProviderError(NAME, NO_MEDIA);
 
 	return {
 		metadata: {},
@@ -168,15 +186,11 @@ async function fetchViaYtDlp(
 
 /** Resolves directly-embeddable media URLs (for inline mode) via fxTwitter. */
 async function resolveDirectTweet(url: URL): Promise<DirectMediaResult> {
-	const parsed = parse(url);
-	if (!parsed)
-		throw new ProviderError("twitter", "Не удалось распознать ссылку на твит");
+	const tweet = await fetchFxTweet(postId(url));
+	if (!tweet) throw new ProviderError(NAME, "Не удалось получить твит");
 
-	const tweet = await fetchFxTweet(parsed.id);
-	if (!tweet) throw new ProviderError("twitter", "Не удалось получить твит");
-
-	const photos = tweet.media?.photos ?? [];
-	const videos = tweet.media?.videos ?? [];
+	const { photos, videos } = mediaOf(tweet);
+	// Videos without a thumbnail fall back to the first photo of the tweet.
 	const thumbFallback = photos[0]?.url;
 
 	const items: DirectMediaItem[] = [
@@ -188,25 +202,17 @@ async function resolveDirectTweet(url: URL): Promise<DirectMediaResult> {
 				: [];
 		}),
 	];
-	if (items.length === 0)
-		throw new ProviderError("twitter", "В твите не найдено медиа");
+	if (items.length === 0) throw new ProviderError(NAME, NO_MEDIA);
 
 	return { metadata: metadataOf(tweet), items };
 }
 
 export const twitterProvider: Provider = {
-	name: "twitter",
+	name: NAME,
 	sites: ["X (Twitter)"],
 	match: (url) => parse(url) !== null,
 	async fetch(url, downloadDir): Promise<ProviderResult> {
-		const parsed = parse(url);
-		if (!parsed)
-			throw new ProviderError(
-				"twitter",
-				"Не удалось распознать ссылку на твит",
-			);
-
-		const fx = await fetchViaFx(parsed.id, downloadDir);
+		const fx = await fetchViaFx(postId(url), downloadDir);
 		if (fx) return fx;
 
 		return fetchViaYtDlp(url, downloadDir);

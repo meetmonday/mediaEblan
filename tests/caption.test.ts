@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { CaptionBuilder, captionFor } from "../src/media/caption.ts";
-import type { MediaMetadata } from "../src/providers/types.ts";
+import { format } from "gramio";
+import {
+	CaptionBuilder,
+	captionFor,
+	textResultCaption,
+} from "../src/media/caption.ts";
+import type { MediaMetadata, ProviderResult } from "../src/providers/types.ts";
 
 const author = {
 	displayName: "ArtLover",
@@ -76,7 +81,7 @@ describe("captionFor: standard layout", () => {
 describe("captionFor: provider tweaks", () => {
 	test("statsOrder overrides the rendering order", () => {
 		const caption = captionFor(metadata, {
-			statsOrder: ["views", "likes", "bookmarks", "replies"],
+			options: { statsOrder: ["views", "likes", "bookmarks", "replies"] },
 		}).build();
 		expect(caption.toString()).toBe(
 			`👤 ArtLover (@art_lover)\nСолнечный день\n#солнце #пейзаж\n\n👁 9,9M  ❤️ 1,2M  🔖 88K  💬 42`,
@@ -85,7 +90,10 @@ describe("captionFor: provider tweaks", () => {
 
 	test("statsOrder renders only the present stats", () => {
 		expect(
-			captionFor({ likes: 5, views: 7 }, { statsOrder: ["views", "likes"] })
+			captionFor(
+				{ likes: 5, views: 7 },
+				{ options: { statsOrder: ["views", "likes"] } },
+			)
 				.build()
 				.toString(),
 		).toBe("👁 7  ❤️ 5");
@@ -93,7 +101,7 @@ describe("captionFor: provider tweaks", () => {
 
 	test("extra lines are appended after the metadata block", () => {
 		const caption = captionFor(metadata, {
-			extra: [{ icon: "🎬", text: "1080p" }],
+			options: { extra: [{ icon: "🎬", text: "1080p" }] },
 		}).build();
 		expect(caption.toString()).toBe(
 			`👤 ArtLover (@art_lover)\nСолнечный день\n#солнце #пейзаж\n\n${statsLine}\n🎬 1080p`,
@@ -102,7 +110,7 @@ describe("captionFor: provider tweaks", () => {
 
 	test("extra line without an icon renders text-only", () => {
 		const caption = captionFor(metadata, {
-			extra: [{ icon: "", text: "R-18" }],
+			options: { extra: [{ icon: "", text: "R-18" }] },
 		}).build();
 		expect(caption.toString()).toContain("\nR-18");
 	});
@@ -128,6 +136,40 @@ describe("captionFor: source link", () => {
 		expect(
 			captionFor({ title: "Т" }).sourceLink(undefined).build().toString(),
 		).toBe("Т\n");
+	});
+
+	test("includeSourceLink: false drops the line even with a source URL", () => {
+		expect(
+			captionFor(
+				{ title: "Т" },
+				{ sourceUrl: "https://example.com/post", includeSourceLink: false },
+			)
+				.build()
+				.toString(),
+		).toBe("Т\n");
+	});
+});
+
+describe("textResultCaption: text-only provider results", () => {
+	const result: ProviderResult = {
+		metadata: { author: { displayName: "kekos" }, likes: 3 },
+		items: [],
+		text: {
+			content: format`Текст комментария`,
+			sourceUrl: "https://trashbox.ru/topics/1#div_comment_2",
+		},
+	};
+
+	test("renders metadata, body and the source link", () => {
+		expect(textResultCaption(result).toString()).toBe(
+			"👤 kekos\nТекст комментария\n\n❤️ 3\n\n🔗 https://trashbox.ru/topics/1#div_comment_2",
+		);
+	});
+
+	test("includeSourceLink: false leaves the link to the buttons", () => {
+		expect(
+			textResultCaption(result, { includeSourceLink: false }).toString(),
+		).toBe("👤 kekos\nТекст комментария\n\n❤️ 3");
 	});
 });
 

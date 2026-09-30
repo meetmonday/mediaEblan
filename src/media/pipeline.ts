@@ -2,8 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import type { FormattableString, InlineKeyboard } from "gramio";
 import { config } from "../config.ts";
-import { ProviderError } from "../providers/errors.ts";
-import { HttpError } from "../providers/http.ts";
+import { HttpError, ProviderError } from "../providers/errors.ts";
 import { resolveProvider, supportedSitesText } from "../providers/registry.ts";
 import type {
 	MediaItem,
@@ -11,11 +10,15 @@ import type {
 	Provider,
 	ProviderResult,
 } from "../providers/types.ts";
+import {
+	CompressionError,
+	compressVideo,
+	fileSize,
+} from "../services/ffmpeg.ts";
 import { verrou } from "../services/locks.ts";
 import { sourceButtons } from "../shared/keyboards/index.ts";
-import { mediaCache } from "./cache.ts";
-import { appendSourceLink, cachedCaption, captionFor } from "./caption.ts";
-import { CompressionError, compressVideo, fileSize } from "./ffmpeg.ts";
+import { type CachedMedia, mediaCache } from "./cache.ts";
+import { cachedCaption, captionFor, textResultCaption } from "./caption.ts";
 
 /**
  * Minimal target for whatever delivers media to the user.
@@ -76,15 +79,18 @@ function lockKeyFor(url: URL): string {
 	return `media:${key}`;
 }
 
+async function removeQuietly(path: string): Promise<void> {
+	await rm(path, { force: true }).catch(() => {});
+}
+
+/** Deletes everything the download created, including compressed leftovers. */
 async function cleanup(items: MediaItem[]): Promise<void> {
 	const targets = new Set<string>();
 	for (const item of items) {
 		targets.add(item.path);
 		targets.add(`${item.path}.compressed.mp4`);
 	}
-	await Promise.all(
-		[...targets].map((path) => rm(path, { force: true }).catch(() => {})),
-	);
+	await Promise.all([...targets].map(removeQuietly));
 }
 
 /**
@@ -92,7 +98,7 @@ async function cleanup(items: MediaItem[]): Promise<void> {
  * the user); wraps unexpected values — non-`Error` or errors from outside the
  * hierarchy — into a download `MediaError`.
  */
-function toDownloadError(error: unknown): MediaError {
+function rethrowAsDownloadError(error: unknown): never {
 	if (
 		error instanceof HttpError ||
 		error instanceof ProviderError ||
@@ -101,7 +107,7 @@ function toDownloadError(error: unknown): MediaError {
 	) {
 		throw error;
 	}
-	return new MediaError(
+	throw new MediaError(
 		"download",
 		error instanceof Error ? error.message : "Не удалось скачать медиа",
 	);
@@ -127,11 +133,109 @@ async function fetchProviderResult(
 			try {
 				return await attempt();
 			} catch (retryError) {
-				throw toDownloadError(retryError);
+				throw rethrowAsDownloadError(retryError);
 			}
 		}
-		throw toDownloadError(error);
+		throw rethrowAsDownloadError(error);
 	}
+}
+
+/**
+ * Re-sends an already-known file_id — no download, no API round-trip. The
+ * stored `kind` decides the method: a video `file_id` is not a valid
+ * `sendPhoto` input and Telegram rejects it.
+ */
+async function sendCached(
+	sender: MediaSender,
+	cached: CachedMedia,
+	includeSourceLink: boolean,
+	keyboard?: InlineKeyboard,
+): Promise<void> {
+	const caption = cachedCaption(cached, { includeSourceLink });
+	const send = cached.kind === "photo" ? sender.sendPhoto : sender.sendVideo;
+	await send(cached.fileId, caption, keyboard);
+}
+
+/**
+ * Turns a downloaded file into something sendable: compresses oversized
+ * videos and reports the upload action beforehand.
+ */
+async function prepareItem(
+	sender: MediaSender,
+	item: MediaItem,
+): Promise<MediaGroupInput> {
+	await sender.chatAction(
+		item.kind === "photo" ? "upload_photo" : "upload_video",
+	);
+
+	let input = item.path;
+	if (item.kind === "video" && (await fileSize(item.path)) > maxBytes()) {
+		try {
+			input = await compressVideo(
+				item.path,
+				`${item.path}.compressed.mp4`,
+				maxBytes(),
+			);
+		} catch (error) {
+			throw new MediaError(
+				"compress",
+				error instanceof Error ? error.message : "Не удалось сжать видео",
+			);
+		}
+	}
+
+	return { kind: item.kind, input };
+}
+
+/** Single item → its own message; the resulting file_id is cached. */
+async function sendSingle(
+	sender: MediaSender,
+	item: MediaItem,
+	caption: FormattableString,
+	keyboard: InlineKeyboard | undefined,
+	sourceUrl: string,
+	result: ProviderResult,
+): Promise<void> {
+	const { kind, input } = await prepareItem(sender, item);
+	const { fileId } =
+		kind === "photo"
+			? await sender.sendPhoto(input, caption, keyboard)
+			: await sender.sendVideo(input, caption, keyboard);
+	mediaCache.set(sourceUrl, {
+		kind,
+		fileId,
+		metadata: result.metadata,
+		caption: result.caption,
+	});
+}
+
+/** Several items → one album, caption on the first item, in order. */
+async function sendAlbum(
+	sender: MediaSender,
+	items: MediaItem[],
+	caption: FormattableString,
+	keyboard: InlineKeyboard | undefined,
+): Promise<void> {
+	const inputs: MediaGroupInput[] = [];
+	for (const item of items) inputs.push(await prepareItem(sender, item));
+	await sender.sendMediaGroup(inputs, caption, keyboard);
+}
+
+/** A result with no media at all: either a text answer or nothing to send. */
+async function sendTextResult(
+	sender: MediaSender,
+	result: ProviderResult,
+	includeSourceLink: boolean,
+	keyboard?: InlineKeyboard,
+): Promise<void> {
+	if (!result.text) {
+		throw new MediaError("no-media", "В ссылке не найдено медиа");
+	}
+	await sender.sendText(
+		textResultCaption(result, { includeSourceLink }),
+		{ disableLinkPreview: result.text.disableLinkPreview },
+		keyboard,
+	);
 }
 
 /**
@@ -156,18 +260,18 @@ export interface ProcessMediaOptions {
 export async function processMedia(
 	url: URL,
 	sender: MediaSender,
-	options: ProcessMediaOptions = {},
+	{ withSourceButtons = false }: ProcessMediaOptions = {},
 ): Promise<void> {
 	const sourceUrl = url.toString();
-	const withButtons = options.withSourceButtons ?? false;
 
 	await verrou.createLock(lockKeyFor(url), "5 minutes").run(async () => {
 		const cached = mediaCache.get(sourceUrl);
 		if (cached) {
-			await sender.sendPhoto(
-				cached.fileId,
-				cachedCaption(cached, undefined, !withButtons),
-				withButtons ? sourceButtons(sourceUrl) : undefined,
+			await sendCached(
+				sender,
+				cached,
+				!withSourceButtons,
+				withSourceButtons ? sourceButtons(sourceUrl) : undefined,
 			);
 			return;
 		}
@@ -181,78 +285,34 @@ export async function processMedia(
 		}
 
 		await mkdir(config.DOWNLOAD_DIR, { recursive: true });
-
 		const result = await fetchProviderResult(
 			provider,
 			url,
 			config.DOWNLOAD_DIR,
 		);
-		const keyboard = withButtons ? sourceButtons(sourceUrl) : undefined;
+		const keyboard = withSourceButtons ? sourceButtons(sourceUrl) : undefined;
 
 		if (result.items.length === 0) {
-			if (result.text) {
-				const content =
-					result.text.sourceUrl && !withButtons
-						? appendSourceLink(result.text.content, result.text.sourceUrl)
-						: result.text.content;
-				await sender.sendText(
-					content,
-					{ disableLinkPreview: result.text.disableLinkPreview },
-					keyboard,
-				);
-				return;
-			}
-			throw new MediaError("no-media", "В ссылке не найдено медиа");
+			await sendTextResult(sender, result, !withSourceButtons, keyboard);
+			return;
 		}
 
-		const caption = captionFor(
-			result.metadata,
-			result.caption,
-			undefined,
-			!withButtons,
-		).build();
+		const caption = captionFor(result.metadata, {
+			options: result.caption,
+			includeSourceLink: !withSourceButtons,
+		}).build();
 		try {
-			const prepare = async (item: MediaItem): Promise<MediaGroupInput> => {
-				await sender.chatAction(
-					item.kind === "photo" ? "upload_photo" : "upload_video",
+			if (result.items.length === 1 && result.items[0]) {
+				await sendSingle(
+					sender,
+					result.items[0],
+					caption,
+					keyboard,
+					sourceUrl,
+					result,
 				);
-
-				let input = item.path;
-				if (item.kind === "video" && (await fileSize(item.path)) > maxBytes()) {
-					try {
-						input = await compressVideo(
-							item.path,
-							`${item.path}.compressed.mp4`,
-							maxBytes(),
-						);
-					} catch (error) {
-						throw new MediaError(
-							"compress",
-							error instanceof Error ? error.message : "Не удалось сжать видео",
-						);
-					}
-				}
-
-				return { kind: item.kind, input };
-			};
-
-			const first = result.items[0];
-			if (first && result.items.length === 1) {
-				const { kind, input } = await prepare(first);
-				const { fileId } =
-					kind === "photo"
-						? await sender.sendPhoto(input, caption, keyboard)
-						: await sender.sendVideo(input, caption, keyboard);
-				mediaCache.set(sourceUrl, {
-					kind,
-					fileId,
-					metadata: result.metadata,
-					caption: result.caption,
-				});
 			} else {
-				const inputs: MediaGroupInput[] = [];
-				for (const item of result.items) inputs.push(await prepare(item));
-				await sender.sendMediaGroup(inputs, caption, keyboard);
+				await sendAlbum(sender, result.items, caption, keyboard);
 			}
 		} finally {
 			await cleanup(result.items);

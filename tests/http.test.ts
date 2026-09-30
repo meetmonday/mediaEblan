@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createServer } from "node:net";
-import { fetchWithTimeout, HttpError } from "../src/providers/http.ts";
+import { HttpError } from "../src/providers/errors.ts";
+import { fetchWithTimeout } from "../src/providers/http.ts";
 
 type TestServer = { port: number; close: () => void };
 

@@ -10,6 +10,7 @@ import type {
 	CaptionOptions,
 	MediaAuthor,
 	MediaMetadata,
+	ProviderResult,
 	StatKey,
 } from "../providers/types.ts";
 
@@ -182,15 +183,20 @@ export class CaptionBuilder {
 }
 
 /**
- * Appends the `🔗 url` line to an already-formatted text-only result, exactly
- * like `CaptionBuilder.sourceLink`. Used when a provider returned the content
- * without the source link (in `text.sourceUrl`) and no buttons are attached.
+ * What a single caption render needs: the provider's presentation tweaks plus
+ * the caller's own decisions about the source link.
  */
-export function appendSourceLink(
-	content: FormattableString,
-	url: string,
-): FormattableString {
-	return join([content, link(`🔗 ${url}`, url)], "\n\n");
+export interface CaptionParams {
+	/** Provider-supplied tweaks (stat order, extra lines, rich body, link). */
+	options?: CaptionOptions;
+	/** Source link used when the provider didn't set `options.sourceLink`. */
+	sourceUrl?: string;
+	/**
+	 * Drops the `🔗 url` line entirely — used when the source is exposed as
+	 * «Открыть»/«Поделиться» buttons instead of caption text (deep-link and
+	 * inline flows).
+	 */
+	includeSourceLink?: boolean;
 }
 
 /**
@@ -198,17 +204,14 @@ export function appendSourceLink(
  * author (+place), main text as a quote (or rich `content` when provided),
  * tags, then stats and date.
  * Provider-specific tweaks (stat order, extra lines, content, source link)
- * come from `options`; `sourceUrl` is the fallback for the source link when
- * the provider didn't set one explicitly.
- * With `includeSourceLink = false` the source link line is dropped entirely —
- * used when the source is exposed via buttons instead of caption text.
+ * come from `params.options`; `params.sourceUrl` is the fallback for the source
+ * link when the provider didn't set one explicitly.
  */
 export function captionFor(
 	metadata: MediaMetadata,
-	options?: CaptionOptions,
-	sourceUrl?: string,
-	includeSourceLink = true,
+	params: CaptionParams = {},
 ): CaptionBuilder {
+	const { options, sourceUrl, includeSourceLink = true } = params;
 	const builder = new CaptionBuilder()
 		.author(metadata.author, metadata.place)
 		.text(options?.content ? undefined : metadata.title)
@@ -226,13 +229,26 @@ export function captionFor(
 /** Rebuilds the caption of a cached hit from its stored metadata and options. */
 export function cachedCaption(
 	entry: { metadata: MediaMetadata; caption?: CaptionOptions },
-	sourceUrl?: string,
-	includeSourceLink = true,
+	params: Omit<CaptionParams, "options"> = {},
 ): FormattableString {
-	return captionFor(
-		entry.metadata,
-		entry.caption,
-		sourceUrl,
-		includeSourceLink,
-	).build();
+	return captionFor(entry.metadata, {
+		...params,
+		options: entry.caption,
+	}).build();
+}
+
+/**
+ * Renders a text-only provider result (a comment without media): the standard
+ * metadata block with the comment body as its content, then the source link.
+ * With `includeSourceLink = false` the link is left to the attached buttons.
+ */
+export function textResultCaption(
+	result: ProviderResult,
+	params: CaptionParams = {},
+): FormattableString {
+	return captionFor(result.metadata, {
+		...params,
+		options: { ...params.options, content: result.text?.content },
+		sourceUrl: params.sourceUrl ?? result.text?.sourceUrl,
+	}).build();
 }

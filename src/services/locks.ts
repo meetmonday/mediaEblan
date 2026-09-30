@@ -1,9 +1,12 @@
 import { Verrou } from "@verrou/core";
 import { memoryStore } from "@verrou/core/drivers/memory";
-import { config } from "../config.ts";
 
+/**
+ * Per-resource mutex. The memory store is enough for a single-process bot —
+ * swap `default`/`stores` for a Redis driver to run several instances.
+ */
 export const verrou = new Verrou({
-	default: config.LOCK_STORE,
+	default: "memory",
 	stores: {
 		memory: { driver: memoryStore() },
 	},

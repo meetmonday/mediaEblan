@@ -7,7 +7,7 @@ import { format } from "gramio";
 import { bot } from "../src/bot.ts";
 import { mediaCache } from "../src/media/cache.ts";
 import { MediaError } from "../src/media/pipeline.ts";
-import { HttpError } from "../src/providers/http.ts";
+import { HttpError } from "../src/providers/errors.ts";
 import type { Provider } from "../src/providers/types.ts";
 
 const registryPath = join(import.meta.dir, "../src/providers/registry.ts");
@@ -140,6 +140,25 @@ describe("flow: chat media", () => {
 		expect(call?.params.caption?.toString()).toContain(
 			"👤 VideoCat (@video_cat)",
 		);
+	});
+
+	test("cached video → re-sent as sendVideo, not sendPhoto", async () => {
+		// A video file_id is not a valid sendPhoto input — Telegram rejects it.
+		mediaCache.set("https://example.com/cached-video", {
+			kind: "video",
+			fileId: "video_file_id_123",
+			metadata: { title: "Ранее отправлено" },
+		});
+		const { env, user } = makeEnv();
+
+		await user.sendMessage("https://example.com/cached-video");
+
+		expect(env.filterApiCalls("sendPhoto")).toHaveLength(0);
+		const call = env.lastApiCall("sendVideo");
+		expect(call).toBeDefined();
+		expect(call?.params.caption?.toString()).toContain("Ранее отправлено");
+		// No source buttons in chat mode, so nothing replaces the file_id.
+		expect(call?.params.reply_markup).toBeUndefined();
 	});
 
 	test("text-only result → plain message with link preview disabled", async () => {

@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { createBoundedStore } from "./bounded-store.ts";
 
 const TTL_MS = 15 * 60 * 1000;
 const MAX_ENTRIES = 128;
@@ -8,27 +9,23 @@ interface PendingLink {
 	expiresAt: number;
 }
 
-const pending = new Map<string, PendingLink>();
+const store = createBoundedStore<PendingLink>(MAX_ENTRIES);
 
 /**
  * Short-lived store for URLs that inline mode couldn't serve directly.
  * The returned token fits Telegram's 64-char `start_parameter` limit and
- * is exchanged for the original URL on `/start <token>`.
+ * is exchanged for the original URL on `/start <token>` — once only.
  */
 export const pendingLinks = {
 	set(url: string): string {
-		if (pending.size >= MAX_ENTRIES) {
-			const oldest = pending.keys().next().value;
-			if (oldest !== undefined) pending.delete(oldest);
-		}
 		const token = randomBytes(8).toString("base64url");
-		pending.set(token, { url, expiresAt: Date.now() + TTL_MS });
+		store.set(token, { url, expiresAt: Date.now() + TTL_MS });
 		return token;
 	},
 	get(token: string): string | null {
-		const entry = pending.get(token);
+		const entry = store.get(token);
 		if (!entry) return null;
-		pending.delete(token);
+		store.delete(token);
 		if (Date.now() > entry.expiresAt) return null;
 		return entry.url;
 	},

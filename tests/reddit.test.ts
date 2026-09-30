@@ -2,7 +2,15 @@ import "./setup.ts";
 import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { extractPostId, redditProvider } from "../src/providers/reddit.ts";
+import {
+	HttpError,
+	NetworkError,
+	ProviderError,
+} from "../src/providers/errors.ts";
+import {
+	extractPostId,
+	redditProvider,
+} from "../src/providers/reddit/index.ts";
 
 const downloadDir = join("/tmp/opencode/test-media", "reddit");
 
@@ -101,6 +109,7 @@ const MANIFEST_XML = `<MPD><Period>
 </Period></MPD>`;
 
 let redditBlocked = false;
+let networkDown = false;
 
 const realFetch = globalThis.fetch;
 
@@ -108,6 +117,11 @@ beforeAll(() => {
 	globalThis.fetch = mock(async (input: RequestInfo | URL) => {
 		const url = new URL(String(input));
 		const method = input instanceof Request ? input.method : "GET";
+
+		// Both post sources are unreachable — a transport failure, not an answer.
+		if (networkDown && url.hostname !== "i.redd.it") {
+			throw new Error("ECONNRESET");
+		}
 
 		if (url.hostname === "arctic-shift.photon-reddit.com") {
 			const id = url.searchParams.get("ids");
@@ -300,6 +314,56 @@ describe("reddit: fetch (chat)", () => {
 				downloadDir,
 			);
 			expect(result.items).toHaveLength(1);
+		} finally {
+			redditBlocked = false;
+		}
+	});
+});
+
+describe("reddit: error classification", () => {
+	test("no source has the post → semantic error, not retried", async () => {
+		await expect(
+			redditProvider.fetch(
+				new URL("https://www.reddit.com/r/example/comments/1missing/"),
+				downloadDir,
+			),
+		).rejects.toThrow("Не удалось получить пост — Reddit недоступен");
+
+		const error = await redditProvider
+			.fetch(
+				new URL("https://www.reddit.com/r/example/comments/1missing/"),
+				downloadDir,
+			)
+			.catch((thrown: unknown) => thrown);
+		expect(error).toBeInstanceOf(ProviderError);
+		expect(error).not.toBeInstanceOf(HttpError);
+	});
+
+	test("every source unreachable → retryable transport error", async () => {
+		networkDown = true;
+		try {
+			const error = await redditProvider
+				.fetch(
+					new URL("https://www.reddit.com/r/antimeme/comments/1vjg1zm/"),
+					downloadDir,
+				)
+				.catch((thrown: unknown) => thrown);
+
+			// The pipeline retries exactly on HttpError (NetworkError included).
+			expect(error).toBeInstanceOf(NetworkError);
+			expect(error).toBeInstanceOf(HttpError);
+		} finally {
+			networkDown = false;
+		}
+	});
+
+	test("one source blocked, the other reachable → still resolves", async () => {
+		redditBlocked = true;
+		try {
+			const result = await redditProvider.resolveDirect?.(
+				new URL("https://www.reddit.com/r/antimeme/comments/1vjg1zm/"),
+			);
+			expect(result?.items).toHaveLength(1);
 		} finally {
 			redditBlocked = false;
 		}

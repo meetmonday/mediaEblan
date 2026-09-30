@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { textResultCaption } from "../src/media/caption.ts";
 import {
 	commentMediaSources,
-	commentMessage,
 	findCommentUrl,
 	firstImgSrc,
 	htmlCleaner,
 	resolveCommentUrl,
-} from "../src/services/trashbox.ts";
+} from "../src/providers/trashbox/comment.ts";
+import { commentResult } from "../src/providers/trashbox/index.ts";
 
 describe("trashbox comment URL parsing", () => {
 	test("extracts the full URL including the comment id", () => {
@@ -132,7 +133,7 @@ describe("trashbox image helpers", () => {
 	});
 });
 
-describe("trashbox comment message", () => {
+describe("trashbox comment result", () => {
 	const comment = {
 		comm_id: "1334063",
 		parent: "0",
@@ -146,7 +147,7 @@ describe("trashbox comment message", () => {
 	const sourceUrl = "https://trashbox.ru/topics/132125/mm#div_comment_1334063";
 
 	test("embeds comment images as clickable text links with the URL as label", () => {
-		const message = commentMessage(comment, sourceUrl);
+		const message = textResultCaption(commentResult(comment, sourceUrl));
 		const text = message.toString();
 		expect(text).toContain("🖼");
 		expect(text).toContain(
@@ -161,5 +162,12 @@ describe("trashbox comment message", () => {
 				}),
 			]),
 		);
+	});
+
+	test("carries metadata and a title, no media items", () => {
+		const result = commentResult(comment, sourceUrl);
+		expect(result.items).toHaveLength(0);
+		expect(result.metadata.author?.displayName).toBe("kekos");
+		expect(result.text?.title).toBe("Комментарий @kekos");
 	});
 });

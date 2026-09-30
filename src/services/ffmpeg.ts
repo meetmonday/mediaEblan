@@ -1,5 +1,5 @@
 import { stat } from "node:fs/promises";
-import { ProcError, runBinary } from "../services/proc.ts";
+import { ProcError, runBinary } from "./proc.ts";
 
 export class CompressionError extends Error {}
 

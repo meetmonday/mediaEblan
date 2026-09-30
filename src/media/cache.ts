@@ -3,6 +3,7 @@ import type {
 	MediaKind,
 	MediaMetadata,
 } from "../providers/types.ts";
+import { createBoundedStore } from "../services/bounded-store.ts";
 
 export interface CachedMedia {
 	kind: MediaKind;
@@ -14,18 +15,14 @@ export interface CachedMedia {
 
 const MAX_ENTRIES = 512;
 
-const cache = new Map<string, CachedMedia>();
+const store = createBoundedStore<CachedMedia>(MAX_ENTRIES);
 
 /** Maps a source URL to the file_id (and metadata) of media already sent from it. */
 export const mediaCache = {
 	get(url: string): CachedMedia | undefined {
-		return cache.get(url);
+		return store.get(url);
 	},
 	set(url: string, value: CachedMedia): void {
-		if (cache.size >= MAX_ENTRIES) {
-			const oldest = cache.keys().next().value;
-			if (oldest !== undefined) cache.delete(oldest);
-		}
-		cache.set(url, value);
+		store.set(url, value);
 	},
 };
